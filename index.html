@@ -8,7 +8,7 @@
     <!-- PWA Manifest -->
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#2563EB">
-    <link rel="apple-touch-icon" href="icons/icon.png">
+    <link rel="apple-touch-icon" href="icons/icon-192x192.png">
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -332,7 +332,12 @@
 
                 <!-- Tab: Códigos (Novo Layout) -->
                 <div v-if="activeTab === 'codes'" class="space-y-4">
-                    <p class="text-xs text-gray-500 mb-2">Para códigos com intervalo único, preencha apenas Início/Fim 1. Para códigos fracionados (ex: 7-13 e 21-7), preencha também o 2.</p>
+                    <div class="flex justify-between items-center mb-2">
+                        <p class="text-xs text-gray-500">Para códigos com intervalo único, preencha apenas Início/Fim 1.</p>
+                        <button @click="resetCodesToDefault" class="text-xs text-red-500 hover:text-red-700 underline" title="Substitui todos os códigos atuais pelos da planilha original">
+                            Restaurar Padrão (CSV)
+                        </button>
+                    </div>
                     
                     <!-- Header -->
                     <div class="grid grid-cols-12 gap-2 text-xs font-bold bg-gray-100 p-2 rounded text-center">
@@ -432,6 +437,7 @@
             });
 
             // Dados Iniciais (Extraídos da Planilha)
+            // Códigos 16 (13h-19h), 17 (vazio), 18 (vazio)
             const defaultCodes = [
                 {id: 1, code: 1, start: '07:00', end: '13:00', duration: 6},
                 {id: 2, code: 2, start: '15:00', end: '21:00', duration: 6},
@@ -448,7 +454,9 @@
                 {id: 13, code: 13, start: '13:15', end: '19:00', duration: 5.75}, // 5h 45min
                 {id: 14, code: 14, start: '19:15', end: '07:00', duration: 11.75}, // 11h 45min
                 {id: 15, code: 15, start: '07:00', end: '13:00', start2: '19:00', end2: '07:00', duration: 18},
-                {id: 16, code: 16, start: '13:00', end: '19:00', duration: 6}
+                {id: 16, code: 16, start: '13:00', end: '19:00', duration: 6},
+                {id: 17, code: 17, start: '00:00', end: '00:00', duration: 0}, // Placeholder
+                {id: 18, code: 18, start: '00:00', end: '00:00', duration: 0}  // Placeholder
             ];
 
             onMounted(() => {
@@ -597,6 +605,15 @@
             const removeCode = (idx) => {
                 codes.value.splice(idx, 1);
                 saveGlobalData();
+            };
+            
+            // Função para resetar códigos manualmente, se necessário
+             const resetCodesToDefault = () => {
+                if(confirm("ATENÇÃO: Isso apagará todos os códigos editados e restaurará a lista original da planilha CSV. Deseja continuar?")) {
+                    codes.value = JSON.parse(JSON.stringify(defaultCodes)); // Deep copy para evitar reatividade indesejada na constante
+                    saveGlobalData();
+                    alert("Códigos restaurados com sucesso!");
+                }
             };
 
             // Cores Automáticas
@@ -885,7 +902,7 @@
                 toggleAdjustment, getAdjustment,
                 calculateMonthlyHours, calculateAnnualHours,
                 formatMonthYear, formatDateShort, exportToPDF, exportToXLS,
-                isAuthorized, formatDuration
+                isAuthorized, formatDuration, resetCodesToDefault
             };
         }
     }).mount('#app');
