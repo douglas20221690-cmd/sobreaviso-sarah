@@ -420,9 +420,22 @@
                 try {
                     await auth.value.signInWithPopup(provider);
                 } catch (e) {
+                    // CORREÇÃO: Se o usuário já está logado (user.value ou auth.currentUser existe),
+                    // então o erro foi um falso positivo do popup. Ignora e retorna.
+                    if (user.value || auth.value.currentUser) {
+                        console.warn("Erro de auth ignorado pois usuário já logou com sucesso:", e.message);
+                        return;
+                    }
+
                     if (e.code === 'auth/unauthorized-domain') {
                         const domain = window.location.hostname;
                         alert(`ERRO DE DOMÍNIO:\n\nAdicione o domínio '${domain}' no console do Firebase > Auth > Settings > Authorized domains.`);
+                    } else if (e.code === 'auth/internal-error') {
+                         console.error("Erro interno (provável falso positivo):", e);
+                         // Só alerta se realmente não tiver logado
+                         if (!user.value) {
+                             alert("Erro de conexão com o Google. Se você não entrou, tente novamente.");
+                         }
                     } else {
                         alert("Erro no login: " + e.message);
                     }
