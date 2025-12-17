@@ -233,17 +233,25 @@
                                 <td class="border p-2">
                                     <div class="flex flex-wrap gap-2">
                                         <div v-for="(shift, idx) in getShiftsForDay(day.dateStr)" :key="idx" 
-                                             class="flex items-center doctor-chip bg-white border rounded shadow-sm px-2 py-1"
-                                             :style="{ borderLeft: '4px solid ' + getDoctorColor(shift.doctorId) }">
-                                            <span class="font-bold text-gray-700 mr-2" :title="getShiftTooltip(shift.codeId)">
-                                                Cod {{ shift.codeId }}
-                                            </span>
-                                            <span class="mr-2 font-medium" :style="{ color: getDoctorColor(shift.doctorId) }">
-                                                {{ getDoctorName(shift.doctorId) }}
-                                            </span>
-                                            <button @click="removeShift(day.dateStr, idx)" class="text-red-400 hover:text-red-600 ml-auto no-print">
-                                                <i data-lucide="x" class="w-3 h-3"></i>
-                                            </button>
+                                             class="flex flex-col bg-white border rounded shadow-sm px-2 py-1 min-w-[140px] doctor-chip cursor-pointer"
+                                             @click="openEditModal(day.dateStr, idx)"
+                                             :style="{ borderLeft: '4px solid ' + getDoctorColor(shift.doctorId) }"
+                                             title="Clique para editar">
+                                            
+                                            <!-- Linha 1: Código e Nome -->
+                                            <div class="flex items-center justify-between mb-1">
+                                                <span class="font-bold text-gray-700 text-xs bg-gray-100 px-1 rounded">
+                                                    Cod {{ shift.codeId }}
+                                                </span>
+                                                <span class="font-bold text-xs" :style="{ color: getDoctorColor(shift.doctorId) }">
+                                                    {{ getDoctorName(shift.doctorId) }}
+                                                </span>
+                                            </div>
+
+                                            <!-- Linha 2: Detalhes do Horário (NOVO) -->
+                                            <div class="text-[10px] text-gray-500 leading-tight">
+                                                {{ getShiftTimeDetails(shift.codeId) }}
+                                            </div>
                                         </div>
                                     </div>
                                 </td>
@@ -261,10 +269,15 @@
         </main>
     </div>
 
-    <!-- Modal: Adicionar Plantão -->
+    <!-- Modal: Adicionar/Editar Plantão (UNIFICADO) -->
     <div v-if="showAddModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
         <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
-            <h3 class="text-lg font-bold mb-4">Adicionar Plantão - {{ formatDateShort(selectedDateToAdd) }}</h3>
+            <div class="flex justify-between items-center mb-4">
+                <h3 class="text-lg font-bold">{{ isEditing ? 'Editar' : 'Adicionar' }} Plantão - {{ formatDateShort(selectedDateToAdd) }}</h3>
+                <button v-if="isEditing" @click="deleteShift" class="text-red-500 hover:text-red-700 text-sm flex items-center gap-1">
+                    <i data-lucide="trash-2" class="w-4 h-4"></i> Excluir
+                </button>
+            </div>
             
             <div class="mb-4">
                 <label class="block text-sm font-medium mb-1">Código do Plantão</label>
@@ -285,9 +298,9 @@
             </div>
 
             <div class="flex justify-end gap-3">
-                <button @click="showAddModal = false" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancelar</button>
-                <button @click="addShift" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50" :disabled="!newShift.codeId || !newShift.doctorId">
-                    Adicionar
+                <button @click="closeModal" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancelar</button>
+                <button @click="saveShift" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50" :disabled="!newShift.codeId || !newShift.doctorId">
+                    {{ isEditing ? 'Salvar Alteração' : 'Adicionar' }}
                 </button>
             </div>
         </div>
@@ -428,6 +441,10 @@
             // Código agora suporta 2 horários
             const newCode = ref({ code: '', start: '07:00', end: '13:00', start2: '', end2: '', duration: 12 });
             const newShift = ref({ codeId: '', doctorId: '' });
+            
+            // Controle de Edição
+            const isEditing = ref(false);
+            const editingIndex = ref(-1);
 
             const isAuthorized = computed(() => {
                 return user.value && allowedEmails.includes(user.value.email);
@@ -655,29 +672,67 @@
 
             const getShiftsForDay = (dateStr) => schedule.value[dateStr] || [];
 
+            // Abertura do Modal para ADICIONAR (Limpa o form)
             const openAddModal = (dateStr) => {
                 selectedDateToAdd.value = dateStr;
                 newShift.value = { codeId: '', doctorId: '' };
+                isEditing.value = false;
+                editingIndex.value = -1;
                 showAddModal.value = true;
             };
 
-            const addShift = () => {
+            // Abertura do Modal para EDITAR (Carrega dados existentes)
+            const openEditModal = (dateStr, idx) => {
+                selectedDateToAdd.value = dateStr;
+                const shift = schedule.value[dateStr][idx];
+                newShift.value = { ...shift }; // Copia os dados
+                isEditing.value = true;
+                editingIndex.value = idx;
+                showAddModal.value = true;
+            };
+
+            const closeModal = () => {
+                showAddModal.value = false;
+                isEditing.value = false;
+                editingIndex.value = -1;
+            };
+
+            const saveShift = () => {
                 const date = selectedDateToAdd.value;
                 if (!schedule.value[date]) schedule.value[date] = [];
                 
-                const existingShift = schedule.value[date].find(s => s.codeId == newShift.value.codeId);
-                if (existingShift) {
-                    alert("Já existe um médico para este código neste dia.");
-                    return;
+                // Validação de Duplicidade (Só se estiver adicionando ou mudando o código na edição)
+                if (!isEditing || (isEditing.value && schedule.value[date][editingIndex.value].codeId != newShift.value.codeId)) {
+                    const existingShift = schedule.value[date].find(s => s.codeId == newShift.value.codeId);
+                    if (existingShift) {
+                        alert("Já existe um médico para este código neste dia.");
+                        return;
+                    }
                 }
-                schedule.value[date].push({ ...newShift.value });
+
+                if (isEditing.value) {
+                    // Edição: Substitui no índice
+                    schedule.value[date][editingIndex.value] = { ...newShift.value };
+                } else {
+                    // Adição: Push no array
+                    schedule.value[date].push({ ...newShift.value });
+                }
+
                 saveMonthData();
-                showAddModal.value = false;
+                closeModal();
             };
 
             const removeShift = (dateStr, idx) => {
                 schedule.value[dateStr].splice(idx, 1);
                 saveMonthData();
+            };
+
+            // Remove o plantão de dentro do modal de edição
+            const deleteShift = () => {
+                if(confirm("Tem certeza que deseja excluir este plantão?")) {
+                    removeShift(selectedDateToAdd.value, editingIndex.value);
+                    closeModal();
+                }
             };
 
             // Helpers
@@ -686,6 +741,15 @@
             const getShiftTooltip = (codeId) => {
                 const c = codes.value.find(c => c.code == codeId);
                 return c ? getCodeDescription(c) : '';
+            };
+
+            // Nova função para mostrar detalhes na grade
+            const getShiftTimeDetails = (codeId) => {
+                const c = codes.value.find(c => c.code == codeId);
+                if (!c) return '';
+                let time = `${c.start}-${c.end}`;
+                if (c.start2 && c.end2) time += ` / ${c.start2}-${c.end2}`;
+                return `${time} (${formatDuration(c.duration)})`;
             };
 
             const getCodeDescription = (c) => {
@@ -838,8 +902,8 @@
                 codes, newCode, addCode, removeCode, getDoctorColor,
                 currentMonthStr, loadMonthData,
                 daysInMonth, toggleHoliday,
-                showAddModal, openAddModal, selectedDateToAdd, newShift, addShift, removeShift,
-                schedule, getShiftsForDay, getDoctorName, getShiftTooltip, getCodeDescription,
+                showAddModal, openAddModal, openEditModal, closeModal, selectedDateToAdd, newShift, saveShift, deleteShift, isEditing,
+                schedule, getShiftsForDay, getDoctorName, getShiftTooltip, getCodeDescription, getShiftTimeDetails,
                 toggleAdjustment, getAdjustment,
                 calculateMonthlyHours, calculateAnnualHours,
                 formatMonthYear, formatDateShort, exportToPDF,
