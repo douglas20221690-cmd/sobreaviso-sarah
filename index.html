@@ -1,0 +1,749 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Escala de Sobreaviso Médico</title>
+    
+    <!-- PWA Manifest -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#2563EB">
+    <link rel="apple-touch-icon" href="icons/icon-192x192.png">
+
+    <!-- Tailwind CSS (Via CDN) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Vue 3 (Via CDN) -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+    
+    <!-- Firebase SDKs (Via CDN) -->
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
+
+    <!-- Ícones (Lucide) -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        [v-cloak] { display: none; }
+        .holiday-bg { background-color: #fee2e2; } /* Vermelho claro */
+        .weekend-bg { background-color: #f3f4f6; } /* Cinza claro */
+        .selected-day { border: 2px solid #2563EB; }
+        
+        /* Ajustes para impressão */
+        @media print {
+            .no-print { display: none !important; }
+            body { background: white; }
+            .print-border { border: 1px solid #ddd; }
+        }
+    </style>
+</head>
+<body class="bg-gray-50 text-gray-800 antialiased">
+
+<div id="app" v-cloak class="min-h-screen flex flex-col">
+
+    <!-- Navbar -->
+    <nav class="bg-blue-600 text-white shadow-md p-4 no-print">
+        <div class="max-w-7xl mx-auto flex justify-between items-center">
+            <h1 class="text-xl font-bold flex items-center gap-2">
+                <i data-lucide="calendar-heart"></i> Gestão de Sobreaviso
+            </h1>
+            <div class="flex gap-4 items-center">
+                <span v-if="user" class="text-sm hidden sm:inline">{{ user.displayName }}</span>
+                <button @click="showSettings = true" class="p-2 hover:bg-blue-700 rounded-full" title="Configurações">
+                    <i data-lucide="settings"></i>
+                </button>
+                <button v-if="user" @click="logout" class="p-2 hover:bg-blue-700 rounded-full" title="Sair">
+                    <i data-lucide="log-out"></i>
+                </button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Login Screen -->
+    <div v-if="!user" class="flex-grow flex items-center justify-center p-4">
+        <div class="bg-white p-8 rounded-xl shadow-lg max-w-md w-full text-center">
+            <div class="mb-6 text-blue-600 flex justify-center">
+                <i data-lucide="activity" size="48" class="w-16 h-16"></i>
+            </div>
+            <h2 class="text-2xl font-bold mb-2">Bem-vindo</h2>
+            <p class="text-gray-500 mb-6">Faça login para gerenciar a escala.</p>
+            
+            <button @click="login" class="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 font-semibold flex items-center justify-center gap-2 mb-4">
+                <i data-lucide="log-in"></i> Entrar com Google
+            </button>
+            
+            <button @click="showSettings = true" class="text-sm text-gray-400 hover:text-gray-600 underline">
+                Configurar Firebase (Primeiro Acesso)
+            </button>
+        </div>
+    </div>
+
+    <!-- Main App -->
+    <div v-else class="flex-grow max-w-7xl w-full mx-auto p-4 flex flex-col lg:flex-row gap-6">
+        
+        <!-- Coluna Esquerda: Controles e Legenda -->
+        <aside class="w-full lg:w-1/4 flex flex-col gap-6 no-print">
+            
+            <!-- Seletor de Mês -->
+            <div class="bg-white p-4 rounded-lg shadow">
+                <label class="block text-sm font-medium text-gray-700 mb-1">Mês de Referência</label>
+                <input type="month" v-model="currentMonthStr" @change="loadMonthData" class="w-full border rounded p-2">
+            </div>
+
+            <!-- Legenda de Códigos -->
+            <div class="bg-white p-4 rounded-lg shadow">
+                <div class="flex justify-between items-center mb-2">
+                    <h3 class="font-bold text-gray-700">Legenda de Códigos</h3>
+                    <button @click="showSettings = true" class="text-xs text-blue-500 hover:underline">Editar</button>
+                </div>
+                <div class="space-y-2 text-sm max-h-60 overflow-y-auto">
+                    <div v-for="code in codes" :key="code.id" class="flex justify-between items-center border-b pb-1 last:border-0">
+                        <div>
+                            <span class="font-bold text-blue-600 bg-blue-50 px-1 rounded">Cod {{ code.code }}</span>
+                            <span class="ml-2 text-gray-600">{{ code.start }} - {{ code.end }}</span>
+                        </div>
+                        <span class="text-xs font-semibold bg-gray-100 px-2 py-0.5 rounded">{{ code.duration }}h</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Ajustes Mensais (Noturno) -->
+            <div class="bg-white p-4 rounded-lg shadow">
+                <h3 class="font-bold text-gray-700 mb-2">Ajuste Mensal (Noturno)</h3>
+                <p class="text-xs text-gray-500 mb-3">Marque quem fez plantão noturno este mês (-18h).</p>
+                <div class="space-y-2">
+                    <div v-for="doc in doctors" :key="doc.id" class="flex items-center justify-between">
+                        <span class="text-sm">{{ doc.name }}</span>
+                        <label class="relative inline-flex items-center cursor-pointer">
+                            <input type="checkbox" 
+                                   :checked="getAdjustment(doc.id)" 
+                                   @change="toggleAdjustment(doc.id)"
+                                   class="sr-only peer">
+                            <div class="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-600"></div>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Botão Exportar -->
+            <button @click="exportToCSV" class="w-full bg-green-600 text-white py-2 rounded shadow hover:bg-green-700 flex justify-center gap-2">
+                <i data-lucide="download"></i> Exportar CSV
+            </button>
+        </aside>
+
+        <!-- Coluna Direita: Escala e Totais -->
+        <main class="w-full lg:w-3/4 flex flex-col gap-6">
+            
+            <!-- Resumo de Horas (Anual e Mensal) -->
+            <div class="bg-white p-4 rounded-lg shadow overflow-x-auto">
+                <h3 class="font-bold text-lg mb-3">Banco de Horas (Estimado)</h3>
+                <table class="w-full text-sm text-left">
+                    <thead class="bg-gray-50 text-gray-600 uppercase">
+                        <tr>
+                            <th class="px-3 py-2">Médico</th>
+                            <th class="px-3 py-2 text-center">Total Mês</th>
+                            <th class="px-3 py-2 text-center">Ajuste Noturno</th>
+                            <th class="px-3 py-2 text-center font-bold text-blue-700">Total Anual</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr v-for="doc in doctors" :key="doc.id" class="border-b hover:bg-gray-50">
+                            <td class="px-3 py-2 font-medium">{{ doc.name }}</td>
+                            <td class="px-3 py-2 text-center">{{ calculateMonthlyHours(doc.id) }}h</td>
+                            <td class="px-3 py-2 text-center text-red-500">
+                                {{ getAdjustment(doc.id) ? '-18h' : '-' }}
+                            </td>
+                            <td class="px-3 py-2 text-center font-bold text-blue-700 text-base">
+                                {{ calculateAnnualHours(doc.id) }}h
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+
+            <!-- Grade da Escala -->
+            <div class="bg-white rounded-lg shadow overflow-hidden">
+                <div class="p-4 bg-gray-50 border-b flex justify-between items-center">
+                    <h2 class="font-bold text-xl text-gray-800">Escala: {{ formatMonthYear(currentMonthStr) }}</h2>
+                    <span class="text-xs text-gray-500 hidden sm:inline">Clique no dia para marcar Feriado</span>
+                </div>
+
+                <div class="overflow-x-auto">
+                    <table class="w-full text-sm border-collapse">
+                        <thead>
+                            <tr class="bg-gray-100 text-gray-600">
+                                <th class="border p-2 w-16 text-center">Dia</th>
+                                <th class="border p-2 w-24 text-center">Semana</th>
+                                <th class="border p-2 text-left">Plantões (Código: Médico)</th>
+                                <th class="border p-2 w-16 text-center no-print">Ação</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr v-for="day in daysInMonth" :key="day.dateStr" 
+                                :class="{ 'weekend-bg': day.isWeekend, 'holiday-bg': day.isHoliday }">
+                                
+                                <!-- Dia (Clicável para Feriado) -->
+                                <td @click="toggleHoliday(day.dateStr)" 
+                                    class="border p-2 text-center font-bold cursor-pointer hover:bg-red-100 select-none"
+                                    title="Clique para alternar Feriado">
+                                    {{ day.day }}
+                                </td>
+                                
+                                <td class="border p-2 text-center text-gray-500 uppercase text-xs">
+                                    {{ day.weekDay }}
+                                    <span v-if="day.isHoliday" class="block text-red-500 font-bold text-[10px]">FERIADO</span>
+                                </td>
+                                
+                                <!-- Plantões -->
+                                <td class="border p-2">
+                                    <div class="flex flex-wrap gap-2">
+                                        <div v-for="(shift, idx) in getShiftsForDay(day.dateStr)" :key="idx" 
+                                             class="flex items-center bg-white border rounded shadow-sm px-2 py-1">
+                                            <span class="font-bold text-blue-600 mr-2" :title="getShiftTooltip(shift.codeId)">
+                                                {{ shift.codeId }}
+                                            </span>
+                                            <span class="mr-2 text-gray-800">{{ getDoctorName(shift.doctorId) }}</span>
+                                            <button @click="removeShift(day.dateStr, idx)" class="text-red-400 hover:text-red-600 ml-auto no-print">
+                                                <i data-lucide="x" class="w-3 h-3"></i>
+                                            </button>
+                                        </div>
+                                        <span v-if="getShiftsForDay(day.dateStr).length === 0" class="text-gray-400 italic text-xs p-1">
+                                            Sem plantões
+                                        </span>
+                                    </div>
+                                </td>
+
+                                <!-- Botão Adicionar -->
+                                <td class="border p-2 text-center no-print">
+                                    <button @click="openAddModal(day.dateStr)" class="bg-blue-100 text-blue-600 p-1.5 rounded hover:bg-blue-200">
+                                        <i data-lucide="plus" class="w-4 h-4"></i>
+                                    </button>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Modal: Adicionar Plantão -->
+    <div v-if="showAddModal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-md p-6">
+            <h3 class="text-lg font-bold mb-4">Adicionar Plantão - {{ formatDateShort(selectedDateToAdd) }}</h3>
+            
+            <div class="mb-4">
+                <label class="block text-sm font-medium mb-1">Código do Plantão</label>
+                <select v-model="newShift.codeId" class="w-full border rounded p-2 bg-white">
+                    <option v-for="code in codes" :key="code.id" :value="code.code">
+                        {{ code.code }} - ({{ code.start }} às {{ code.end }}) - {{ code.duration }}h
+                    </option>
+                </select>
+            </div>
+
+            <div class="mb-6">
+                <label class="block text-sm font-medium mb-1">Médico</label>
+                <select v-model="newShift.doctorId" class="w-full border rounded p-2 bg-white">
+                    <option v-for="doc in doctors" :key="doc.id" :value="doc.id">
+                        {{ doc.name }}
+                    </option>
+                </select>
+                <p v-if="hasDoctorConflict" class="text-red-500 text-xs mt-1">
+                    ⚠ Este médico já está escalado neste dia em outro código.
+                </p>
+            </div>
+
+            <div class="flex justify-end gap-3">
+                <button @click="showAddModal = false" class="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded">Cancelar</button>
+                <button @click="addShift" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50" :disabled="!newShift.codeId || !newShift.doctorId">
+                    Adicionar
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal: Configurações Globais -->
+    <div v-if="showSettings" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 h-[80vh] overflow-y-auto">
+            <div class="flex justify-between items-center mb-6">
+                <h2 class="text-2xl font-bold">Configurações</h2>
+                <button @click="showSettings = false" class="text-gray-500 hover:text-gray-700">
+                    <i data-lucide="x"></i>
+                </button>
+            </div>
+
+            <!-- Tabs -->
+            <div class="flex border-b mb-4">
+                <button @click="activeTab = 'firebase'" :class="['px-4 py-2', activeTab === 'firebase' ? 'border-b-2 border-blue-500 font-bold' : '']">Firebase</button>
+                <button @click="activeTab = 'doctors'" :class="['px-4 py-2', activeTab === 'doctors' ? 'border-b-2 border-blue-500 font-bold' : '']">Médicos</button>
+                <button @click="activeTab = 'codes'" :class="['px-4 py-2', activeTab === 'codes' ? 'border-b-2 border-blue-500 font-bold' : '']">Códigos</button>
+            </div>
+
+            <!-- Tab: Firebase -->
+            <div v-if="activeTab === 'firebase'" class="space-y-4">
+                <p class="text-sm text-gray-600 bg-blue-50 p-3 rounded">
+                    Para usar o app, crie um projeto no Firebase, ative <b>Firestore</b> e <b>Auth (Google)</b>. Cole a configuração JSON ou as chaves abaixo. Os dados são salvos no seu navegador.
+                </p>
+                <div>
+                    <label class="block text-sm font-bold mb-1">API Key</label>
+                    <input v-model="firebaseConfigInput.apiKey" type="text" class="w-full border p-2 rounded text-sm font-mono">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Auth Domain</label>
+                    <input v-model="firebaseConfigInput.authDomain" type="text" class="w-full border p-2 rounded text-sm font-mono">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">Project ID</label>
+                    <input v-model="firebaseConfigInput.projectId" type="text" class="w-full border p-2 rounded text-sm font-mono">
+                </div>
+                <div>
+                    <label class="block text-sm font-bold mb-1">App ID</label>
+                    <input v-model="firebaseConfigInput.appId" type="text" class="w-full border p-2 rounded text-sm font-mono">
+                </div>
+                <button @click="saveFirebaseConfig" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Salvar e Recarregar</button>
+            </div>
+
+            <!-- Tab: Médicos -->
+            <div v-if="activeTab === 'doctors'" class="space-y-4">
+                <div class="flex gap-2">
+                    <input v-model="newDoctorName" @keyup.enter="addDoctor" placeholder="Nome do Médico" class="flex-grow border p-2 rounded">
+                    <button @click="addDoctor" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Adicionar</button>
+                </div>
+                <ul class="divide-y">
+                    <li v-for="(doc, idx) in doctors" :key="doc.id" class="py-2 flex justify-between items-center">
+                        <input v-model="doc.name" @change="saveGlobalData" class="border-none bg-transparent focus:bg-gray-50 p-1">
+                        <button @click="removeDoctor(idx)" class="text-red-500 hover:text-red-700 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                    </li>
+                </ul>
+            </div>
+
+            <!-- Tab: Códigos -->
+            <div v-if="activeTab === 'codes'" class="space-y-4">
+                <div class="grid grid-cols-5 gap-2 items-end bg-gray-50 p-2 rounded">
+                    <div class="col-span-1">
+                        <label class="text-xs">Cód</label>
+                        <input v-model="newCode.code" type="number" class="w-full border p-1 rounded">
+                    </div>
+                    <div class="col-span-1">
+                        <label class="text-xs">Início</label>
+                        <input v-model="newCode.start" type="time" class="w-full border p-1 rounded">
+                    </div>
+                    <div class="col-span-1">
+                        <label class="text-xs">Fim</label>
+                        <input v-model="newCode.end" type="time" class="w-full border p-1 rounded">
+                    </div>
+                    <div class="col-span-1">
+                        <label class="text-xs">Duração (h)</label>
+                        <input v-model="newCode.duration" type="number" class="w-full border p-1 rounded">
+                    </div>
+                    <button @click="addCode" class="bg-green-600 text-white p-1.5 rounded hover:bg-green-700 h-9"><i data-lucide="plus"></i></button>
+                </div>
+
+                <div v-for="(code, idx) in codes" :key="code.id" class="grid grid-cols-5 gap-2 items-center border-b py-2">
+                    <input v-model="code.code" type="number" class="border p-1 rounded" @change="saveGlobalData">
+                    <input v-model="code.start" type="time" class="border p-1 rounded" @change="saveGlobalData">
+                    <input v-model="code.end" type="time" class="border p-1 rounded" @change="saveGlobalData">
+                    <input v-model="code.duration" type="number" class="border p-1 rounded" @change="saveGlobalData">
+                    <button @click="removeCode(idx)" class="text-red-500 hover:text-red-700 flex justify-center"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<script>
+    const { createApp, ref, computed, onMounted, watch } = Vue;
+
+    createApp({
+        setup() {
+            // State
+            const user = ref(null);
+            const db = ref(null);
+            const auth = ref(null);
+            const currentMonthStr = ref(new Date().toISOString().slice(0, 7)); // YYYY-MM
+            const showSettings = ref(false);
+            const activeTab = ref('doctors');
+            const showAddModal = ref(false);
+            const selectedDateToAdd = ref('');
+            
+            // Dados Globais (Config)
+            const doctors = ref([]);
+            const codes = ref([]);
+            
+            // Dados Mensais (Schedule)
+            const schedule = ref({}); // { 'YYYY-MM-DD': [ {codeId: 1, doctorId: 'abc'} ] }
+            const holidays = ref([]); // ['YYYY-MM-DD']
+            const adjustments = ref({}); // { 'doctorId': boolean } (para o mês atual)
+            const annualTotals = ref({}); // { 'doctorId': number } (Cache simples de totais anuais)
+
+            // Inputs Temporários
+            const firebaseConfigInput = ref({ apiKey: '', authDomain: '', projectId: '', appId: '' });
+            const newDoctorName = ref('');
+            const newCode = ref({ code: '', start: '07:00', end: '19:00', duration: 12 });
+            const newShift = ref({ codeId: '', doctorId: '' });
+
+            // Inicialização
+            onMounted(() => {
+                const storedConfig = localStorage.getItem('firebaseConfig');
+                if (storedConfig) {
+                    firebaseConfigInput.value = JSON.parse(storedConfig);
+                    initializeFirebase(firebaseConfigInput.value);
+                } else {
+                    showSettings.value = true;
+                    activeTab.value = 'firebase';
+                }
+                lucide.createIcons();
+            });
+
+            // Firebase Init
+            const initializeFirebase = (config) => {
+                try {
+                    if (!firebase.apps.length) {
+                        firebase.initializeApp(config);
+                    }
+                    auth.value = firebase.auth();
+                    db.value = firebase.firestore();
+                    
+                    auth.value.onAuthStateChanged((u) => {
+                        user.value = u;
+                        if (u) {
+                            loadGlobalData();
+                            loadMonthData();
+                            calculateAnnualTotals(); // Carrega totais iniciais
+                        }
+                    });
+                } catch (e) {
+                    console.error("Erro Firebase", e);
+                    alert("Erro na configuração do Firebase. Verifique as chaves.");
+                }
+            };
+
+            const saveFirebaseConfig = () => {
+                localStorage.setItem('firebaseConfig', JSON.stringify(firebaseConfigInput.value));
+                window.location.reload();
+            };
+
+            const login = async () => {
+                if(!auth.value) return alert("Configure o Firebase primeiro.");
+                const provider = new firebase.auth.GoogleAuthProvider();
+                try {
+                    await auth.value.signInWithPopup(provider);
+                } catch (e) {
+                    alert("Erro no login: " + e.message);
+                }
+            };
+
+            const logout = () => auth.value.signOut();
+
+            // Gerenciamento de Dados
+            const loadGlobalData = async () => {
+                if (!db.value) return;
+                const doc = await db.value.collection('config').doc('main').get();
+                if (doc.exists) {
+                    const data = doc.data();
+                    doctors.value = data.doctors || [];
+                    codes.value = data.codes || [];
+                } else {
+                    // Dados Iniciais Padrão
+                    doctors.value = [{id: '1', name: 'Médico A'}, {id: '2', name: 'Médico B'}];
+                    codes.value = [
+                        {id: 1, code: 1, start: '07:00', end: '19:00', duration: 12},
+                        {id: 2, code: 2, start: '19:00', end: '07:00', duration: 12},
+                        {id: 3, code: 3, start: '07:00', end: '13:00', duration: 6}
+                    ];
+                    saveGlobalData();
+                }
+            };
+
+            const saveGlobalData = async () => {
+                if (!db.value) return;
+                await db.value.collection('config').doc('main').set({
+                    doctors: doctors.value,
+                    codes: codes.value
+                });
+            };
+
+            const loadMonthData = async () => {
+                if (!db.value) return;
+                const docRef = db.value.collection('schedules').doc(currentMonthStr.value);
+                
+                // Realtime Listener
+                docRef.onSnapshot((doc) => {
+                    if (doc.exists) {
+                        const data = doc.data();
+                        schedule.value = data.schedule || {};
+                        holidays.value = data.holidays || [];
+                        adjustments.value = data.adjustments || {};
+                    } else {
+                        schedule.value = {};
+                        holidays.value = [];
+                        adjustments.value = {};
+                    }
+                    // Atualiza ícones após renderizar
+                    setTimeout(() => lucide.createIcons(), 100);
+                });
+
+                // Recalcular anual sempre que mudar o mês para garantir consistência
+                calculateAnnualTotals(); 
+            };
+
+            const saveMonthData = async () => {
+                if (!db.value) return;
+                await db.value.collection('schedules').doc(currentMonthStr.value).set({
+                    schedule: schedule.value,
+                    holidays: holidays.value,
+                    adjustments: adjustments.value
+                }, { merge: true });
+                calculateAnnualTotals(); // Atualiza anual ao salvar
+            };
+
+            // Lógica de Negócio
+            const addDoctor = () => {
+                if (!newDoctorName.value) return;
+                doctors.value.push({ id: Date.now().toString(), name: newDoctorName.value });
+                newDoctorName.value = '';
+                saveGlobalData();
+            };
+
+            const removeDoctor = (idx) => {
+                doctors.value.splice(idx, 1);
+                saveGlobalData();
+            };
+
+            const addCode = () => {
+                if (!newCode.value.code) return;
+                codes.value.push({ ...newCode.value, id: Date.now() });
+                saveGlobalData();
+                newCode.value = { code: '', start: '07:00', end: '19:00', duration: 12 };
+            };
+
+            const removeCode = (idx) => {
+                codes.value.splice(idx, 1);
+                saveGlobalData();
+            };
+
+            // Computados para Calendário
+            const daysInMonth = computed(() => {
+                const [year, month] = currentMonthStr.value.split('-').map(Number);
+                const date = new Date(year, month - 1, 1);
+                const days = [];
+                const weekDays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+
+                while (date.getMonth() === month - 1) {
+                    const dateStr = date.toISOString().split('T')[0];
+                    const dayOfWeek = date.getDay();
+                    days.push({
+                        dateStr,
+                        day: date.getDate(),
+                        weekDay: weekDays[dayOfWeek],
+                        isWeekend: dayOfWeek === 0 || dayOfWeek === 6,
+                        isHoliday: holidays.value.includes(dateStr)
+                    });
+                    date.setDate(date.getDate() + 1);
+                }
+                return days;
+            });
+
+            // Operações na Escala
+            const toggleHoliday = (dateStr) => {
+                const idx = holidays.value.indexOf(dateStr);
+                if (idx > -1) holidays.value.splice(idx, 1);
+                else holidays.value.push(dateStr);
+                saveMonthData();
+            };
+
+            const getShiftsForDay = (dateStr) => schedule.value[dateStr] || [];
+
+            const openAddModal = (dateStr) => {
+                selectedDateToAdd.value = dateStr;
+                newShift.value = { codeId: '', doctorId: '' };
+                showAddModal.value = true;
+            };
+
+            const addShift = () => {
+                const date = selectedDateToAdd.value;
+                if (!schedule.value[date]) schedule.value[date] = [];
+                
+                // Validação Simples
+                const existingShift = schedule.value[date].find(s => s.codeId == newShift.value.codeId);
+                if (existingShift) {
+                    alert("Já existe um médico para este código neste dia.");
+                    return;
+                }
+
+                schedule.value[date].push({ ...newShift.value });
+                saveMonthData();
+                showAddModal.value = false;
+            };
+
+            const removeShift = (dateStr, idx) => {
+                schedule.value[dateStr].splice(idx, 1);
+                saveMonthData();
+            };
+
+            const hasDoctorConflict = computed(() => {
+                const date = selectedDateToAdd.value;
+                if (!schedule.value[date]) return false;
+                // Verifica se o médico já está em QUALQUER código nesse dia
+                // (Nota: O requisito diz "O mesmo dia pode ter vários médicos, desde que em horários diferentes". 
+                // Assumindo que o médico pode trabalhar em horários diferentes no mesmo dia, então não é conflito apenas estar no dia.
+                // Mas não pode estar no MESMO código. Isso já valido no addShift.)
+                return false; 
+            });
+
+            const getDoctorName = (id) => doctors.value.find(d => d.id === id)?.name || 'Desconhecido';
+            const getShiftTooltip = (codeId) => {
+                const c = codes.value.find(c => c.code == codeId);
+                return c ? `${c.start} - ${c.end} (${c.duration}h)` : '';
+            };
+
+            const toggleAdjustment = (docId) => {
+                adjustments.value[docId] = !adjustments.value[docId];
+                saveMonthData();
+            };
+            const getAdjustment = (docId) => !!adjustments.value[docId];
+
+            // Cálculos
+            const calculateMonthlyHours = (docId) => {
+                let total = 0;
+                for (const date in schedule.value) {
+                    // Check se o dia pertence ao mês atual (caso haja sujeira no banco)
+                    if(date.startsWith(currentMonthStr.value)) {
+                        const shifts = schedule.value[date];
+                        shifts.forEach(shift => {
+                            if (shift.doctorId === docId) {
+                                const code = codes.value.find(c => c.code == shift.codeId);
+                                if (code) total += Number(code.duration);
+                            }
+                        });
+                    }
+                }
+                // Ajuste Noturno (-18h)
+                if (adjustments.value[docId]) {
+                    // Não subtrai do total mensal "bruto" visualmente, mas impacta o saldo?
+                    // O requisito diz "aplicar um ajuste fixo... no total anual".
+                    // Mas para visualização, vamos mostrar o bruto e o ajuste separado.
+                }
+                return total;
+            };
+
+            const calculateAnnualTotals = async () => {
+                if (!db.value) return;
+                const year = currentMonthStr.value.split('-')[0];
+                const totals = {}; // { docId: number }
+
+                // Puxar todos os meses desse ano
+                // Nota: Firestore não tem "startsWith" query nativa fácil sem range filters.
+                // Como são poucos dados, vamos fazer uma query simples:
+                // collection 'schedules' where documentId >= '2025-01' and <= '2025-12'
+                const start = `${year}-01`;
+                const end = `${year}-12`;
+                
+                try {
+                    const snapshot = await db.value.collection('schedules')
+                        .where(firebase.firestore.FieldPath.documentId(), '>=', start)
+                        .where(firebase.firestore.FieldPath.documentId(), '<=', end)
+                        .get();
+
+                    doctors.value.forEach(d => totals[d.id] = 0);
+
+                    snapshot.forEach(doc => {
+                        const data = doc.data();
+                        const monthSched = data.schedule || {};
+                        const monthAdj = data.adjustments || {};
+
+                        // Soma horas dos plantões
+                        Object.values(monthSched).forEach(dayShifts => {
+                            dayShifts.forEach(shift => {
+                                const code = codes.value.find(c => c.code == shift.codeId);
+                                if (code && totals[shift.doctorId] !== undefined) {
+                                    totals[shift.doctorId] += Number(code.duration);
+                                }
+                            });
+                        });
+
+                        // Subtrai ajustes (-18)
+                        Object.keys(monthAdj).forEach(docId => {
+                            if (monthAdj[docId] && totals[docId] !== undefined) {
+                                totals[docId] -= 18;
+                            }
+                        });
+                    });
+
+                    annualTotals.value = totals;
+                } catch (e) {
+                    console.error("Erro calculando anual", e);
+                }
+            };
+
+            const calculateAnnualHours = (docId) => annualTotals.value[docId] || 0;
+
+            // Utils e Export
+            const formatMonthYear = (str) => {
+                const [y, m] = str.split('-');
+                return `${m}/${y}`;
+            };
+            const formatDateShort = (str) => {
+                if(!str) return '';
+                const [y, m, d] = str.split('-');
+                return `${d}/${m}`;
+            };
+
+            const exportToCSV = () => {
+                let csvContent = "data:text/csv;charset=utf-8,";
+                csvContent += "Dia,Semana,Codigo,Inicio,Fim,Horas,Medico,Feriado\n";
+
+                daysInMonth.value.forEach(day => {
+                    const shifts = getShiftsForDay(day.dateStr);
+                    const isHolidayStr = day.isHoliday ? "SIM" : "NAO";
+                    
+                    if (shifts.length === 0) {
+                        csvContent += `${day.day}/${formatMonthYear(currentMonthStr.value)},${day.weekDay},,,,,,${isHolidayStr}\n`;
+                    } else {
+                        shifts.forEach(shift => {
+                            const code = codes.value.find(c => c.code == shift.codeId);
+                            const docName = getDoctorName(shift.doctorId);
+                            csvContent += `${day.day}/${formatMonthYear(currentMonthStr.value)},${day.weekDay},${code?.code || ''},${code?.start || ''},${code?.end || ''},${code?.duration || ''},${docName},${isHolidayStr}\n`;
+                        });
+                    }
+                });
+
+                // Add Totals at bottom
+                csvContent += "\n\nRESUMO MENSAL\nMedico,Total Mes,Ajuste Noturno,Total Anual (Ate agora)\n";
+                doctors.value.forEach(doc => {
+                    const month = calculateMonthlyHours(doc.id);
+                    const adj = getAdjustment(doc.id) ? "SIM (-18h)" : "NAO";
+                    const annual = calculateAnnualHours(doc.id);
+                    csvContent += `${doc.name},${month},${adj},${annual}\n`;
+                });
+
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `Escala_${currentMonthStr.value}.csv`);
+                document.body.appendChild(link);
+                link.click();
+            };
+
+            return {
+                user, login, logout,
+                firebaseConfigInput, saveFirebaseConfig,
+                showSettings, activeTab,
+                doctors, newDoctorName, addDoctor, removeDoctor,
+                codes, newCode, addCode, removeCode,
+                currentMonthStr, loadMonthData,
+                daysInMonth, toggleHoliday,
+                showAddModal, openAddModal, selectedDateToAdd, newShift, addShift, removeShift,
+                schedule, getShiftsForDay, getDoctorName, getShiftTooltip, hasDoctorConflict,
+                toggleAdjustment, getAdjustment,
+                calculateMonthlyHours, calculateAnnualHours,
+                formatMonthYear, formatDateShort, exportToCSV
+            };
+        }
+    }).mount('#app');
+</script>
+
+</body>
+</html>
