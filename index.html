@@ -8,8 +8,6 @@
     <!-- PWA Manifest -->
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#2563EB">
-    
-    <!-- Ícones atualizados para usar icon.png na raiz -->
     <link rel="icon" type="image/png" href="icon.png">
     <link rel="apple-touch-icon" href="icon.png">
 
@@ -27,10 +25,9 @@
     <!-- Ícones -->
     <script src="https://unpkg.com/lucide@latest"></script>
 
-    <!-- Bibliotecas para Exportação (PDF e Excel/ODS) -->
+    <!-- Bibliotecas para Exportação (Apenas PDF) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.29/jspdf.plugin.autotable.min.js"></script>
-    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 
     <style>
         [v-cloak] { display: none; }
@@ -163,10 +160,7 @@
             <!-- Botões Exportar -->
             <div class="flex flex-col gap-2">
                 <button @click="exportToPDF" class="w-full bg-red-600 text-white py-2 rounded shadow hover:bg-red-700 flex justify-center gap-2 items-center">
-                    <i data-lucide="file-text"></i> Exportar PDF
-                </button>
-                <button @click="exportToXLS" class="w-full bg-green-600 text-white py-2 rounded shadow hover:bg-green-700 flex justify-center gap-2 items-center">
-                    <i data-lucide="sheet"></i> Exportar Planilha (ODS/XLS)
+                    <i data-lucide="file-text"></i> Exportar PDF (2 Páginas)
                 </button>
             </div>
         </aside>
@@ -751,7 +745,6 @@
                         const monthSched = data.schedule || {};
                         const monthAdj = data.adjustments || {};
 
-                        // Soma horas dos plantões
                         Object.values(monthSched).forEach(dayShifts => {
                             dayShifts.forEach(shift => {
                                 const code = codes.value.find(c => c.code == shift.codeId);
@@ -760,8 +753,6 @@
                                 }
                             });
                         });
-                        
-                        // CORREÇÃO: Soma 18h se fez noturno (Crédito de horas)
                         Object.keys(monthAdj).forEach(docId => {
                             if (monthAdj[docId] && totals[docId] !== undefined) {
                                 totals[docId] += 18; // Antes era -= 18
@@ -782,6 +773,8 @@
                 const { jsPDF } = window.jspdf;
                 const doc = new jsPDF();
 
+                // === PÁGINA 1: ESCALA MENSAL ===
+                
                 // Título
                 doc.setFontSize(16);
                 doc.text(`Escala de Sobreaviso - ${formatMonthYear(currentMonthStr.value)}`, 14, 20);
@@ -813,9 +806,12 @@
                     headStyles: { fillColor: [37, 99, 235] }
                 });
 
-                // Tabela Resumo
-                let finalY = doc.lastAutoTable.finalY + 15;
-                doc.text("Resumo Mensal e Anual", 14, finalY);
+                // === PÁGINA 2: RESUMO ===
+                doc.addPage(); // Adiciona quebra de página
+
+                // Título da Página 2
+                doc.setFontSize(16);
+                doc.text("Resumo Mensal e Anual", 14, 20);
                 
                 const summaryData = doctors.value.map(d => [
                     d.name,
@@ -825,7 +821,7 @@
                 ]);
 
                 doc.autoTable({
-                    startY: finalY + 5,
+                    startY: 30,
                     head: [['Médico', 'Total Mês', 'Noturno', 'Total Anual']],
                     body: summaryData,
                     theme: 'striped',
@@ -833,67 +829,6 @@
                 });
 
                 doc.save(`Escala_${currentMonthStr.value}.pdf`);
-            };
-
-            const exportToXLS = () => {
-                // Estratégia: Criar array de arrays (Matriz) e converter com SheetJS
-                // Cabeçalho
-                const wb = XLSX.utils.book_new();
-                const wsData = [
-                    ["Escala de Sobreaviso", formatMonthYear(currentMonthStr.value)],
-                    [],
-                    ["Dia", "Semana", "Feriado", "Cód", "Início 1", "Fim 1", "Início 2", "Fim 2", "Horas", "Médico"]
-                ];
-
-                // Dados da Grade
-                daysInMonth.value.forEach(day => {
-                    const shifts = getShiftsForDay(day.dateStr);
-                    const isHol = day.isHoliday ? "SIM" : "";
-                    
-                    if (shifts.length === 0) {
-                        wsData.push([day.day, day.weekDay, isHol, "", "", "", "", "", "", ""]);
-                    } else {
-                        shifts.forEach(shift => {
-                            const code = codes.value.find(c => c.code == shift.codeId);
-                            const docName = getDoctorName(shift.doctorId);
-                            
-                            wsData.push([
-                                day.day, 
-                                day.weekDay, 
-                                isHol,
-                                code?.code || '',
-                                code?.start || '',
-                                code?.end || '',
-                                code?.start2 || '',
-                                code?.end2 || '',
-                                code?.duration || '',
-                                docName
-                            ]);
-                        });
-                    }
-                });
-
-                // Espaço e Resumo
-                wsData.push([], [], ["RESUMO DE HORAS"], ["Médico", "Total Mês", "Ajuste Noturno", "Total Anual"]);
-                
-                doctors.value.forEach(d => {
-                    wsData.push([
-                        d.name,
-                        calculateMonthlyHours(d.id),
-                        getAdjustment(d.id) ? "+18h" : "-",
-                        calculateAnnualHours(d.id)
-                    ]);
-                });
-
-                const ws = XLSX.utils.aoa_to_sheet(wsData);
-                
-                // Ajuste de largura de coluna (cosmético)
-                ws['!cols'] = [
-                    {wch: 5}, {wch: 10}, {wch: 8}, {wch: 5}, {wch: 8}, {wch: 8}, {wch: 8}, {wch: 8}, {wch: 6}, {wch: 25}
-                ];
-
-                XLSX.utils.book_append_sheet(wb, ws, "Escala");
-                XLSX.writeFile(wb, `Escala_${currentMonthStr.value}.xls`); // .xls é melhor aceito como "genérico" que .ods por algumas libs, mas Libre abre ambos.
             };
 
             return {
@@ -907,7 +842,7 @@
                 schedule, getShiftsForDay, getDoctorName, getShiftTooltip, getCodeDescription,
                 toggleAdjustment, getAdjustment,
                 calculateMonthlyHours, calculateAnnualHours,
-                formatMonthYear, formatDateShort, exportToPDF, exportToXLS,
+                formatMonthYear, formatDateShort, exportToPDF,
                 isAuthorized, formatDuration, resetCodesToDefault
             };
         }
