@@ -50,7 +50,7 @@
             </h1>
             <div class="flex gap-4 items-center">
                 <span v-if="user" class="text-sm hidden sm:inline">{{ user.displayName }}</span>
-                <button @click="showSettings = true" class="p-2 hover:bg-blue-700 rounded-full" title="Configurações">
+                <button v-if="user" @click="showSettings = true" class="p-2 hover:bg-blue-700 rounded-full" title="Configurações">
                     <i data-lucide="settings"></i>
                 </button>
                 <button v-if="user" @click="logout" class="p-2 hover:bg-blue-700 rounded-full" title="Sair">
@@ -67,14 +67,10 @@
                 <i data-lucide="activity" size="48" class="w-16 h-16"></i>
             </div>
             <h2 class="text-2xl font-bold mb-2">Bem-vindo</h2>
-            <p class="text-gray-500 mb-6">Faça login para gerenciar a escala.</p>
+            <p class="text-gray-500 mb-6">Acesso restrito a administradores.</p>
             
             <button @click="login" class="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 font-semibold flex items-center justify-center gap-2 mb-4">
                 <i data-lucide="log-in"></i> Entrar com Google
-            </button>
-            
-            <button @click="showSettings = true" class="text-sm text-gray-400 hover:text-gray-600 underline">
-                Configurar Firebase (Primeiro Acesso)
             </button>
         </div>
     </div>
@@ -275,36 +271,11 @@
 
             <!-- Tabs -->
             <div class="flex border-b mb-4">
-                <button @click="activeTab = 'firebase'" :class="['px-4 py-2', activeTab === 'firebase' ? 'border-b-2 border-blue-500 font-bold' : '']">Firebase</button>
                 <button @click="activeTab = 'doctors'" :class="['px-4 py-2', activeTab === 'doctors' ? 'border-b-2 border-blue-500 font-bold' : '']">Médicos</button>
                 <button @click="activeTab = 'codes'" :class="['px-4 py-2', activeTab === 'codes' ? 'border-b-2 border-blue-500 font-bold' : '']">Códigos</button>
             </div>
 
-            <!-- Tab: Firebase -->
-            <div v-if="activeTab === 'firebase'" class="space-y-4">
-                <p class="text-sm text-gray-600 bg-blue-50 p-3 rounded">
-                    Para usar o app, crie um projeto no Firebase, ative <b>Firestore</b> e <b>Auth (Google)</b>. Cole a configuração JSON ou as chaves abaixo. Os dados são salvos no seu navegador.
-                </p>
-                <div>
-                    <label class="block text-sm font-bold mb-1">API Key</label>
-                    <input v-model="firebaseConfigInput.apiKey" type="text" class="w-full border p-2 rounded text-sm font-mono">
-                </div>
-                <div>
-                    <label class="block text-sm font-bold mb-1">Auth Domain</label>
-                    <input v-model="firebaseConfigInput.authDomain" type="text" class="w-full border p-2 rounded text-sm font-mono">
-                </div>
-                <div>
-                    <label class="block text-sm font-bold mb-1">Project ID</label>
-                    <input v-model="firebaseConfigInput.projectId" type="text" class="w-full border p-2 rounded text-sm font-mono">
-                </div>
-                <div>
-                    <label class="block text-sm font-bold mb-1">App ID</label>
-                    <input v-model="firebaseConfigInput.appId" type="text" class="w-full border p-2 rounded text-sm font-mono">
-                </div>
-                <button @click="saveFirebaseConfig" class="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700">Salvar e Recarregar</button>
-            </div>
-
-            <!-- Tab: Médicos -->
+            <!-- Tab: Médicos (Sempre visível se user existe) -->
             <div v-if="activeTab === 'doctors'" class="space-y-4">
                 <div class="flex gap-2">
                     <input v-model="newDoctorName" @keyup.enter="addDoctor" placeholder="Nome do Médico" class="flex-grow border p-2 rounded">
@@ -318,7 +289,7 @@
                 </ul>
             </div>
 
-            <!-- Tab: Códigos -->
+            <!-- Tab: Códigos (Sempre visível se user existe) -->
             <div v-if="activeTab === 'codes'" class="space-y-4">
                 <div class="grid grid-cols-5 gap-2 items-end bg-gray-50 p-2 rounded">
                     <div class="col-span-1">
@@ -356,6 +327,16 @@
 <script>
     const { createApp, ref, computed, onMounted, watch } = Vue;
 
+    // Configuração Hardcoded (Inserida conforme solicitado)
+    const firebaseConfig = {
+      apiKey: "AIzaSyACwzDAdMH3PiROTtoGzhnA6XIRBgqTntA",
+      authDomain: "sobreaviso-sarah.firebaseapp.com",
+      projectId: "sobreaviso-sarah",
+      storageBucket: "sobreaviso-sarah.firebasestorage.app",
+      messagingSenderId: "742306359168",
+      appId: "1:742306359168:web:5344a9b51edd48dd640365"
+    };
+
     createApp({
         setup() {
             // State
@@ -368,108 +349,135 @@
             const showAddModal = ref(false);
             const selectedDateToAdd = ref('');
             
+            // Allowlist de E-mails
+            const allowedEmails = ['douglasrgomes@gmail.com', 'douglas20221690@gmail.com'];
+
             // Dados Globais (Config)
             const doctors = ref([]);
             const codes = ref([]);
             
             // Dados Mensais (Schedule)
-            const schedule = ref({}); // { 'YYYY-MM-DD': [ {codeId: 1, doctorId: 'abc'} ] }
-            const holidays = ref([]); // ['YYYY-MM-DD']
-            const adjustments = ref({}); // { 'doctorId': boolean } (para o mês atual)
-            const annualTotals = ref({}); // { 'doctorId': number } (Cache simples de totais anuais)
+            const schedule = ref({});
+            const holidays = ref([]);
+            const adjustments = ref({});
+            const annualTotals = ref({});
 
             // Inputs Temporários
-            const firebaseConfigInput = ref({ apiKey: '', authDomain: '', projectId: '', appId: '' });
             const newDoctorName = ref('');
             const newCode = ref({ code: '', start: '07:00', end: '19:00', duration: 12 });
             const newShift = ref({ codeId: '', doctorId: '' });
 
             // Inicialização
             onMounted(() => {
-                const storedConfig = localStorage.getItem('firebaseConfig');
-                if (storedConfig) {
-                    firebaseConfigInput.value = JSON.parse(storedConfig);
-                    initializeFirebase(firebaseConfigInput.value);
-                } else {
-                    showSettings.value = true;
-                    activeTab.value = 'firebase';
-                }
+                initializeFirebase();
                 lucide.createIcons();
             });
 
+            // Monitora o estado de login
+            watch(user, (newUser) => {
+                if (!newUser) {
+                    activeTab.value = 'doctors';
+                    doctors.value = [];
+                    codes.value = [];
+                    schedule.value = {};
+                }
+            });
+
             // Firebase Init
-            const initializeFirebase = (config) => {
+            const initializeFirebase = () => {
                 try {
                     if (!firebase.apps.length) {
-                        firebase.initializeApp(config);
+                        firebase.initializeApp(firebaseConfig);
                     }
                     auth.value = firebase.auth();
                     db.value = firebase.firestore();
                     
                     auth.value.onAuthStateChanged((u) => {
+                        // Verificação de segurança no Front-end
+                        if (u && !allowedEmails.includes(u.email)) {
+                            alert(`Acesso negado. O e-mail ${u.email} não tem permissão para acessar este sistema.`);
+                            auth.value.signOut();
+                            user.value = null;
+                            return;
+                        }
+
                         user.value = u;
                         if (u) {
                             loadGlobalData();
                             loadMonthData();
-                            calculateAnnualTotals(); // Carrega totais iniciais
+                            calculateAnnualTotals(); 
                         }
                     });
                 } catch (e) {
                     console.error("Erro Firebase", e);
-                    alert("Erro na configuração do Firebase. Verifique as chaves.");
+                    alert("Erro ao conectar no Firebase. Verifique o console.");
                 }
             };
 
-            const saveFirebaseConfig = () => {
-                localStorage.setItem('firebaseConfig', JSON.stringify(firebaseConfigInput.value));
-                window.location.reload();
-            };
-
             const login = async () => {
-                if(!auth.value) return alert("Configure o Firebase primeiro.");
+                if(!auth.value) return;
                 const provider = new firebase.auth.GoogleAuthProvider();
                 try {
                     await auth.value.signInWithPopup(provider);
                 } catch (e) {
-                    alert("Erro no login: " + e.message);
+                    if (e.code === 'auth/unauthorized-domain') {
+                        const domain = window.location.hostname;
+                        alert(`ERRO DE DOMÍNIO:\n\nAdicione o domínio '${domain}' no console do Firebase > Auth > Settings > Authorized domains.`);
+                    } else {
+                        alert("Erro no login: " + e.message);
+                    }
                 }
             };
 
-            const logout = () => auth.value.signOut();
+            const logout = () => {
+                if(auth.value) auth.value.signOut();
+                user.value = null;
+                doctors.value = [];
+                codes.value = [];
+                schedule.value = {};
+            };
 
             // Gerenciamento de Dados
             const loadGlobalData = async () => {
                 if (!db.value) return;
-                const doc = await db.value.collection('config').doc('main').get();
-                if (doc.exists) {
-                    const data = doc.data();
-                    doctors.value = data.doctors || [];
-                    codes.value = data.codes || [];
-                } else {
-                    // Dados Iniciais Padrão
-                    doctors.value = [{id: '1', name: 'Médico A'}, {id: '2', name: 'Médico B'}];
-                    codes.value = [
-                        {id: 1, code: 1, start: '07:00', end: '19:00', duration: 12},
-                        {id: 2, code: 2, start: '19:00', end: '07:00', duration: 12},
-                        {id: 3, code: 3, start: '07:00', end: '13:00', duration: 6}
-                    ];
-                    saveGlobalData();
+                try {
+                    const doc = await db.value.collection('config').doc('main').get();
+                    if (doc.exists) {
+                        const data = doc.data();
+                        doctors.value = data.doctors || [];
+                        codes.value = data.codes || [];
+                    } else {
+                        // Dados Iniciais
+                        doctors.value = [{id: '1', name: 'Médico A'}, {id: '2', name: 'Médico B'}];
+                        codes.value = [
+                            {id: 1, code: 1, start: '07:00', end: '19:00', duration: 12},
+                            {id: 2, code: 2, start: '19:00', end: '07:00', duration: 12},
+                            {id: 3, code: 3, start: '07:00', end: '13:00', duration: 6}
+                        ];
+                        saveGlobalData();
+                    }
+                } catch (error) {
+                    console.error("Erro ao carregar dados globais:", error);
                 }
             };
 
             const saveGlobalData = async () => {
                 if (!db.value) return;
-                await db.value.collection('config').doc('main').set({
-                    doctors: doctors.value,
-                    codes: codes.value
-                });
+                try {
+                    await db.value.collection('config').doc('main').set({
+                        doctors: doctors.value,
+                        codes: codes.value
+                    });
+                } catch (e) {
+                    console.error("Erro ao salvar:", e);
+                    alert("Erro ao salvar. Verifique se você tem permissão de escrita.");
+                }
             };
 
             const loadMonthData = async () => {
                 if (!db.value) return;
                 const docRef = db.value.collection('schedules').doc(currentMonthStr.value);
                 
-                // Realtime Listener
                 docRef.onSnapshot((doc) => {
                     if (doc.exists) {
                         const data = doc.data();
@@ -481,11 +489,11 @@
                         holidays.value = [];
                         adjustments.value = {};
                     }
-                    // Atualiza ícones após renderizar
                     setTimeout(() => lucide.createIcons(), 100);
+                }, (error) => {
+                    // Silently handle read errors on login screen
                 });
 
-                // Recalcular anual sempre que mudar o mês para garantir consistência
                 calculateAnnualTotals(); 
             };
 
@@ -496,7 +504,7 @@
                     holidays: holidays.value,
                     adjustments: adjustments.value
                 }, { merge: true });
-                calculateAnnualTotals(); // Atualiza anual ao salvar
+                calculateAnnualTotals();
             };
 
             // Lógica de Negócio
@@ -566,7 +574,6 @@
                 const date = selectedDateToAdd.value;
                 if (!schedule.value[date]) schedule.value[date] = [];
                 
-                // Validação Simples
                 const existingShift = schedule.value[date].find(s => s.codeId == newShift.value.codeId);
                 if (existingShift) {
                     alert("Já existe um médico para este código neste dia.");
@@ -586,10 +593,6 @@
             const hasDoctorConflict = computed(() => {
                 const date = selectedDateToAdd.value;
                 if (!schedule.value[date]) return false;
-                // Verifica se o médico já está em QUALQUER código nesse dia
-                // (Nota: O requisito diz "O mesmo dia pode ter vários médicos, desde que em horários diferentes". 
-                // Assumindo que o médico pode trabalhar em horários diferentes no mesmo dia, então não é conflito apenas estar no dia.
-                // Mas não pode estar no MESMO código. Isso já valido no addShift.)
                 return false; 
             });
 
@@ -609,7 +612,6 @@
             const calculateMonthlyHours = (docId) => {
                 let total = 0;
                 for (const date in schedule.value) {
-                    // Check se o dia pertence ao mês atual (caso haja sujeira no banco)
                     if(date.startsWith(currentMonthStr.value)) {
                         const shifts = schedule.value[date];
                         shifts.forEach(shift => {
@@ -620,24 +622,14 @@
                         });
                     }
                 }
-                // Ajuste Noturno (-18h)
-                if (adjustments.value[docId]) {
-                    // Não subtrai do total mensal "bruto" visualmente, mas impacta o saldo?
-                    // O requisito diz "aplicar um ajuste fixo... no total anual".
-                    // Mas para visualização, vamos mostrar o bruto e o ajuste separado.
-                }
                 return total;
             };
 
             const calculateAnnualTotals = async () => {
                 if (!db.value) return;
                 const year = currentMonthStr.value.split('-')[0];
-                const totals = {}; // { docId: number }
+                const totals = {};
 
-                // Puxar todos os meses desse ano
-                // Nota: Firestore não tem "startsWith" query nativa fácil sem range filters.
-                // Como são poucos dados, vamos fazer uma query simples:
-                // collection 'schedules' where documentId >= '2025-01' and <= '2025-12'
                 const start = `${year}-01`;
                 const end = `${year}-12`;
                 
@@ -654,7 +646,6 @@
                         const monthSched = data.schedule || {};
                         const monthAdj = data.adjustments || {};
 
-                        // Soma horas dos plantões
                         Object.values(monthSched).forEach(dayShifts => {
                             dayShifts.forEach(shift => {
                                 const code = codes.value.find(c => c.code == shift.codeId);
@@ -664,7 +655,6 @@
                             });
                         });
 
-                        // Subtrai ajustes (-18)
                         Object.keys(monthAdj).forEach(docId => {
                             if (monthAdj[docId] && totals[docId] !== undefined) {
                                 totals[docId] -= 18;
@@ -710,7 +700,6 @@
                     }
                 });
 
-                // Add Totals at bottom
                 csvContent += "\n\nRESUMO MENSAL\nMedico,Total Mes,Ajuste Noturno,Total Anual (Ate agora)\n";
                 doctors.value.forEach(doc => {
                     const month = calculateMonthlyHours(doc.id);
@@ -729,7 +718,6 @@
 
             return {
                 user, login, logout,
-                firebaseConfigInput, saveFirebaseConfig,
                 showSettings, activeTab,
                 doctors, newDoctorName, addDoctor, removeDoctor,
                 codes, newCode, addCode, removeCode,
