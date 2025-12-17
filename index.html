@@ -8,7 +8,7 @@
     <!-- PWA Manifest -->
     <link rel="manifest" href="manifest.json">
     <meta name="theme-color" content="#2563EB">
-    <link rel="apple-touch-icon" href="icons/icon-192x192.png">
+    <link rel="apple-touch-icon" href="icons/icon.png">
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -126,7 +126,7 @@
                     <div v-for="code in codes" :key="code.id" class="flex flex-col border-b pb-1 last:border-0">
                         <div class="flex justify-between items-center">
                             <span class="font-bold text-blue-600 bg-blue-50 px-1 rounded">Cod {{ code.code }}</span>
-                            <span class="text-xs font-semibold bg-gray-100 px-2 py-0.5 rounded">{{ code.duration }}h</span>
+                            <span class="text-xs font-semibold bg-gray-100 px-2 py-0.5 rounded">{{ formatDuration(code.duration) }}</span>
                         </div>
                         <div class="text-gray-600 text-xs ml-1">
                             {{ code.start }} às {{ code.end }}
@@ -189,12 +189,12 @@
                                 <div class="w-3 h-3 rounded-full" :style="{ backgroundColor: getDoctorColor(doc.id) }"></div>
                                 {{ doc.name }}
                             </td>
-                            <td class="px-3 py-2 text-center">{{ calculateMonthlyHours(doc.id) }}h</td>
+                            <td class="px-3 py-2 text-center">{{ formatDuration(calculateMonthlyHours(doc.id)) }}</td>
                             <td class="px-3 py-2 text-center text-red-500">
                                 {{ getAdjustment(doc.id) ? '-18h' : '-' }}
                             </td>
                             <td class="px-3 py-2 text-center font-bold text-blue-700 text-base">
-                                {{ calculateAnnualHours(doc.id) }}h
+                                {{ formatDuration(calculateAnnualHours(doc.id)) }}
                             </td>
                         </tr>
                     </tbody>
@@ -431,6 +431,26 @@
                 return user.value && allowedEmails.includes(user.value.email);
             });
 
+            // Dados Iniciais (Extraídos da Planilha)
+            const defaultCodes = [
+                {id: 1, code: 1, start: '07:00', end: '13:00', duration: 6},
+                {id: 2, code: 2, start: '15:00', end: '21:00', duration: 6},
+                {id: 3, code: 3, start: '07:00', end: '21:00', duration: 14},
+                {id: 4, code: 4, start: '21:00', end: '07:00', duration: 10},
+                {id: 5, code: 5, start: '07:00', end: '07:00', duration: 24},
+                {id: 6, code: 6, start: '15:00', end: '07:00', duration: 16},
+                {id: 7, code: 7, start: '07:00', end: '13:00', start2: '21:00', end2: '07:00', duration: 16},
+                {id: 8, code: 8, start: '07:00', end: '15:00', duration: 8},
+                {id: 9, code: 9, start: '16:00', end: '07:00', duration: 15},
+                {id: 10, code: 10, start: '18:00', end: '07:00', duration: 13},
+                {id: 11, code: 11, start: '07:00', end: '19:00', duration: 12},
+                {id: 12, code: 12, start: '19:00', end: '07:00', duration: 12},
+                {id: 13, code: 13, start: '13:15', end: '19:00', duration: 5.75}, // 5h 45min
+                {id: 14, code: 14, start: '19:15', end: '07:00', duration: 11.75}, // 11h 45min
+                {id: 15, code: 15, start: '07:00', end: '13:00', start2: '19:00', end2: '07:00', duration: 18},
+                {id: 16, code: 16, start: '13:00', end: '19:00', duration: 6}
+            ];
+
             onMounted(() => {
                 initializeFirebase();
                 lucide.createIcons();
@@ -495,13 +515,23 @@
                 if (doc.exists) {
                     const data = doc.data();
                     doctors.value = data.doctors || [];
-                    codes.value = data.codes || [];
+                    
+                    // Se a lista de códigos no banco estiver vazia ou for muito antiga (padrão antigo),
+                    // vamos atualizar com os novos defaultCodes, preservando o que já existe se for relevante.
+                    // Para simplificar: se não houver códigos, usa o default.
+                    if (!data.codes || data.codes.length === 0) {
+                        codes.value = defaultCodes;
+                        saveGlobalData(); // Salva a nova lista no banco
+                    } else {
+                        codes.value = data.codes;
+                        // Se quiser FORÇAR a atualização dos códigos padrão, descomente abaixo:
+                        // Mas cuidado, isso sobrescreve edições manuais do usuário nos códigos.
+                        // codes.value = defaultCodes; 
+                    }
                 } else {
                     // Padrão Inicial
                     doctors.value = [{id: '1', name: 'Médico A'}, {id: '2', name: 'Médico B'}];
-                    codes.value = [
-                        {id: 1, code: 1, start: '07:00', end: '13:00', start2: '21:00', end2: '07:00', duration: 16} // Exemplo fracionado
-                    ];
+                    codes.value = defaultCodes;
                     saveGlobalData();
                 }
             };
@@ -647,9 +677,16 @@
             const getCodeDescription = (c) => {
                 let desc = `${c.start}-${c.end}`;
                 if (c.start2 && c.end2) desc += ` / ${c.start2}-${c.end2}`;
-                desc += ` (${c.duration}h)`;
+                desc += ` (${formatDuration(c.duration)})`;
                 return desc;
             };
+            
+            const formatDuration = (h) => {
+                const hours = Math.floor(h);
+                const minutes = Math.round((h - hours) * 60);
+                if (minutes > 0) return `${hours}h${minutes}m`;
+                return `${hours}h`;
+            }
 
             const toggleAdjustment = (docId) => {
                 adjustments.value[docId] = !adjustments.value[docId];
@@ -759,9 +796,9 @@
                 
                 const summaryData = doctors.value.map(d => [
                     d.name,
-                    `${calculateMonthlyHours(d.id)}h`,
+                    `${formatDuration(calculateMonthlyHours(d.id))}`,
                     getAdjustment(d.id) ? "SIM (-18h)" : "Não",
-                    `${calculateAnnualHours(d.id)}h`
+                    `${formatDuration(calculateAnnualHours(d.id))}`
                 ]);
 
                 doc.autoTable({
@@ -848,7 +885,7 @@
                 toggleAdjustment, getAdjustment,
                 calculateMonthlyHours, calculateAnnualHours,
                 formatMonthYear, formatDateShort, exportToPDF, exportToXLS,
-                isAuthorized
+                isAuthorized, formatDuration
             };
         }
     }).mount('#app');
