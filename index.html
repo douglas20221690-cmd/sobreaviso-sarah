@@ -194,7 +194,7 @@
                             </td>
                             <td class="px-3 py-2 text-center">{{ formatDuration(calculateMonthlyHours(doc.id)) }}</td>
                             <td class="px-3 py-2 text-center text-red-500">
-                                {{ getAdjustment(doc.id) ? '-18h' : '-' }}
+                                {{ getAdjustment(doc.id) ? '+18h' : '-' }}
                             </td>
                             <td class="px-3 py-2 text-center font-bold text-blue-700 text-base">
                                 {{ formatDuration(calculateAnnualHours(doc.id)) }}
@@ -817,7 +817,7 @@
                 const summaryData = doctors.value.map(d => [
                     d.name,
                     `${formatDuration(calculateMonthlyHours(d.id))}`,
-                    getAdjustment(d.id) ? "SIM (-18h)" : "Não",
+                    getAdjustment(d.id) ? "SIM (+18h)" : "Não",
                     `${formatDuration(calculateAnnualHours(d.id))}`
                 ]);
 
@@ -877,7 +877,7 @@
                     wsData.push([
                         d.name,
                         calculateMonthlyHours(d.id),
-                        getAdjustment(d.id) ? "-18h" : "-",
+                        getAdjustment(d.id) ? "+18h" : "-",
                         calculateAnnualHours(d.id)
                     ]);
                 });
