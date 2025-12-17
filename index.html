@@ -142,7 +142,7 @@
             <!-- Ajustes Mensais -->
             <div class="bg-white p-4 rounded-lg shadow">
                 <h3 class="font-bold text-gray-700 mb-2">Ajuste Mensal (Noturno)</h3>
-                <p class="text-xs text-gray-500 mb-3">Marque quem fez plantão noturno este mês (-18h).</p>
+                <p class="text-xs text-gray-500 mb-3">Marque quem fez plantão noturno este mês (+18h no banco).</p>
                 <div class="space-y-2">
                     <div v-for="doc in doctors" :key="doc.id" class="flex items-center justify-between">
                         <div class="flex items-center gap-2">
@@ -193,7 +193,7 @@
                                 {{ doc.name }}
                             </td>
                             <td class="px-3 py-2 text-center">{{ formatDuration(calculateMonthlyHours(doc.id)) }}</td>
-                            <td class="px-3 py-2 text-center text-red-500">
+                            <td class="px-3 py-2 text-center text-green-600 font-bold">
                                 {{ getAdjustment(doc.id) ? '+18h' : '-' }}
                             </td>
                             <td class="px-3 py-2 text-center font-bold text-blue-700 text-base">
@@ -751,6 +751,7 @@
                         const monthSched = data.schedule || {};
                         const monthAdj = data.adjustments || {};
 
+                        // Soma horas dos plantões
                         Object.values(monthSched).forEach(dayShifts => {
                             dayShifts.forEach(shift => {
                                 const code = codes.value.find(c => c.code == shift.codeId);
@@ -759,9 +760,11 @@
                                 }
                             });
                         });
+                        
+                        // CORREÇÃO: Soma 18h se fez noturno (Crédito de horas)
                         Object.keys(monthAdj).forEach(docId => {
                             if (monthAdj[docId] && totals[docId] !== undefined) {
-                                totals[docId] -= 18;
+                                totals[docId] += 18; // Antes era -= 18
                             }
                         });
                     });
