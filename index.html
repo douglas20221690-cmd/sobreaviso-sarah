@@ -833,69 +833,66 @@
 
             // --- EXPORTAÇÃO ---
 
-            const exportToPDF = () => {
+            const exportToPDF = async () => {
                 const { jsPDF } = window.jspdf;
                 const doc = new jsPDF();
 
-                // === PÁGINA 1: ESCALA MENSAL ===
+                // 1. Preparação de Dados (Mês Atual + Próximo Mês para dias estendidos)
+                // Precisamos buscar o mês seguinte caso a semana termine nele
+                const [currY, currM] = currentMonthStr.value.split('-').map(Number);
+                
+                // Calcula string do próximo mês (ex: "2025-12")
+                let nextY = currY;
+                let nextM = currM + 1;
+                if (nextM > 12) { nextM = 1; nextY++; }
+                const nextMonthStr = `${nextY}-${String(nextM).padStart(2, '0')}`;
+
+                // Busca dados do próximo mês no Firebase
+                let nextMonthSchedule = {};
+                try {
+                    const docSnap = await db.value.collection('schedules').doc(nextMonthStr).get();
+                    if (docSnap.exists) {
+                        nextMonthSchedule = docSnap.data().schedule || {};
+                    }
+                } catch (e) {
+                    console.error("Erro ao buscar mês seguinte para relatório", e);
+                }
+
+                // Mescla os dados para uso no relatório
+                const reportSchedule = { ...schedule.value, ...nextMonthSchedule };
+                
+                // Helper local para buscar desse objeto combinado
+                const getShiftsForReport = (date) => reportSchedule[date] || [];
+
+
+                // === CONSTRUÇÃO DO PDF ===
                 
                 // Título
                 doc.setFontSize(16);
                 doc.text(`Escala de Sobreaviso - ${formatMonthYear(currentMonthStr.value)}`, 14, 20);
 
-                // Preparar dados da tabela (Estendendo até o próximo domingo)
+                // Geração das Linhas da Tabela
                 const tableData = [];
+                let dateIterator = new Date(currY, currM - 1, 1);
                 
-                // 1. Determinar o intervalo de datas (Do dia 1 até o primeiro domingo após o fim do mês)
-                const [year, month] = currentMonthStr.value.split('-').map(Number);
-                let dateIterator = new Date(year, month - 1, 1);
-                
-                // Loop até mudar de mês E passar por um domingo
-                // Condição: Enquanto estiver no mês OU (estiver no mês seguinte MAS o dia anterior não foi domingo)
-                // Simplificando: Continua enquanto (mês == atual) OU (dia da semana != 0 "Domingo")
-                // Mas queremos INCLUIR o domingo final. Então paramos quando (mês > atual) E (dia da semana == 1 "Segunda")
-                
-                // Melhor abordagem: Loop infinito com break
                 while (true) {
                     const dateStr = dateIterator.toISOString().split('T')[0];
-                    const dayOfWeek = dateIterator.getDay(); // 0 = Domingo, 6 = Sábado
+                    const dayOfWeek = dateIterator.getDay(); // 0 = Domingo, 1 = Segunda
                     const currentIterMonth = dateIterator.getMonth() + 1;
                     
-                    // Condição de Parada: Se já passou do mês original E hoje é segunda-feira (significa que fechou o domingo ontem)
-                    // Nota: O mês em JS é 0-11. `month` variavel é 1-12. 
-                    // Se currentIterMonth != month (mudou de mês) E dayOfWeek == 1 (Segunda), paramos.
-                    // Exceção: Se o ultimo dia do mês for domingo, o loop entra no mes seguinte (segunda) e para. Correto.
-                    
-                    if (currentIterMonth !== month && dayOfWeek === 1) {
+                    // Condição de Parada: Mudou de mês E é Segunda-feira (já fechou o domingo anterior)
+                    if (currentIterMonth !== currM && dayOfWeek === 1) {
                         break; 
                     }
 
-                    // Verifica se tem dados para esse dia (mesmo que seja do mês seguinte)
-                    // Precisamos buscar do banco ou da memória se for mês seguinte?
-                    // Como o `schedule` é carregado apenas para o mês atual na tela, dados do próximo mês podem estar faltando se não carregarmos.
-                    // *Limitação*: O app atual carrega `schedule` por documento mensal.
-                    // *Solução Rápida*: O PDF vai mostrar até domingo, mas se virar o mês, só mostrará dados se eles estiverem na memória.
-                    // Como a visualização é mensal, assumimos que o usuário preenche o mês atual. 
-                    // Se o relatório pede dias do mês seguinte, eles aparecerão vazios a menos que mudemos a estrutura de dados.
-                    // Para cumprir o requisito visual "terminar em domingo", vamos gerar as linhas.
-                    
-                    // Lógica de Filtragem (Opcional): Excluir dias vazios que não são FDS/Feriado
-                    // Mas para manter a continuidade visual da semana, é melhor manter todos ou apenas pular se a semana inteira for vazia?
-                    // O user disse: "Datas que não estão preenchidas com plantão (não são feriado ou fim de semana), você pode excluir".
-                    
-                    const shifts = getShiftsForDay(dateStr); // Isso busca no `schedule` atual. Se mudar o mês, pode falhar se a chave não existir.
-                    // Porem, schedule é um objeto { "YYYY-MM-DD": [] }. Se o dia 01/02 estiver lá, vai achar.
-                    // Mas o `loadMonthData` só carrega o doc do mês atual. 
-                    // *Ajuste*: Para dias do próximo mês, eles virão vazios. Tudo bem.
+                    // Busca dados (agora usando o objeto combinado reportSchedule)
+                    const shifts = getShiftsForReport(dateStr);
                     
                     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
                     const isHoliday = holidays.value.includes(dateStr);
                     const hasShifts = shifts && shifts.length > 0;
 
-                    // Regra de Exclusão: Se NÃO tem plantão E NÃO é FDS E NÃO é Feriado -> Pula
-                    // Mas cuidado: Se pularmos dias úteis, a tabela fica estranha ("Segunda, Sexta...").
-                    // O usuário permitiu, então vamos aplicar.
-                    
+                    // Regra de Exclusão: Mostra se tiver plantão OU for FDS OU for Feriado
                     const shouldShow = hasShifts || isWeekend || isHoliday;
 
                     if (shouldShow) {
@@ -904,7 +901,6 @@
                         const holStr = isHoliday ? " (FERIADO)" : "";
                         
                         if (!hasShifts) {
-                            // Linha vazia (só data/sem/feriado) - geralmente FDS ou Feriado sem plantão cadastrado
                             tableData.push([`${dayNum}/${currentIterMonth}`, `${weekDayStr}${holStr}`, "-", "-", "-", "-"]);
                         } else {
                             shifts.forEach(shift => {
@@ -916,25 +912,33 @@
                         }
                     }
 
-                    // Avança dia
                     dateIterator.setDate(dateIterator.getDate() + 1);
                 }
 
+                // Desenha Tabela Principal
                 doc.autoTable({
                     startY: 30,
                     head: [['Dia', 'Semana', 'Cód', 'Horário', 'Médico']],
                     body: tableData,
                     theme: 'grid',
-                    styles: { fontSize: 9 },
-                    headStyles: { fillColor: [37, 99, 235] }
+                    styles: { fontSize: 9, cellPadding: 2 },
+                    headStyles: { fillColor: [37, 99, 235] },
+                    rowPageBreak: 'avoid' // Tenta não quebrar linhas no meio
                 });
 
-                // === PÁGINA 2: RESUMO ===
-                doc.addPage(); // Adiciona quebra de página
+                // === RESUMO (Na mesma página se couber) ===
+                
+                let finalY = doc.lastAutoTable.finalY + 15;
+                const pageHeight = doc.internal.pageSize.height;
 
-                // Título da Página 2
-                doc.setFontSize(16);
-                doc.text("Resumo Mensal e Anual", 14, 20);
+                // Verifica se tem espaço (aprox 60px para o resumo). Se não, cria nova página.
+                if (finalY + 60 > pageHeight) {
+                    doc.addPage();
+                    finalY = 20;
+                }
+
+                doc.setFontSize(14);
+                doc.text("Resumo Mensal e Anual", 14, finalY);
                 
                 const summaryData = doctors.value.map(d => [
                     d.name,
@@ -944,7 +948,7 @@
                 ]);
 
                 doc.autoTable({
-                    startY: 30,
+                    startY: finalY + 5,
                     head: [['Médico', 'Total Mês', 'Noturno', 'Total Anual']],
                     body: summaryData,
                     theme: 'striped',
