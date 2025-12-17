@@ -10,32 +10,36 @@
     <meta name="theme-color" content="#2563EB">
     <link rel="apple-touch-icon" href="icons/icon-192x192.png">
 
-    <!-- Tailwind CSS (Via CDN) -->
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- Vue 3 (Via CDN) -->
+    <!-- Vue 3 -->
     <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
     
-    <!-- Firebase SDKs (Via CDN) -->
+    <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-firestore-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.22.2/firebase-auth-compat.js"></script>
 
-    <!-- Ícones (Lucide) -->
+    <!-- Ícones -->
     <script src="https://unpkg.com/lucide@latest"></script>
+
+    <!-- Bibliotecas para Exportação (PDF e Excel/ODS) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.29/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-0.20.0/package/dist/xlsx.full.min.js"></script>
 
     <style>
         [v-cloak] { display: none; }
         .holiday-bg { background-color: #fee2e2; } /* Vermelho claro */
         .weekend-bg { background-color: #f3f4f6; } /* Cinza claro */
-        .selected-day { border: 2px solid #2563EB; }
         
-        /* Ajustes para impressão */
-        @media print {
-            .no-print { display: none !important; }
-            body { background: white; }
-            .print-border { border: 1px solid #ddd; }
+        /* Ajustes para impressão e visualização */
+        .doctor-chip { 
+            transition: all 0.2s; 
+            border: 1px solid rgba(0,0,0,0.1);
         }
+        .doctor-chip:hover { transform: translateY(-1px); shadow: md; }
     </style>
 </head>
 <body class="bg-gray-50 text-gray-800 antialiased">
@@ -50,7 +54,9 @@
             </h1>
             <div class="flex gap-4 items-center">
                 <span v-if="user" class="text-sm hidden sm:inline">{{ user.displayName }}</span>
-                <button v-if="user" @click="showSettings = true" class="p-2 hover:bg-blue-700 rounded-full" title="Configurações">
+                
+                <!-- Botões da Navbar (Só aparecem se logado E autorizado, exceto Logout que aparece sempre que logado) -->
+                <button v-if="user && isAuthorized" @click="showSettings = true" class="p-2 hover:bg-blue-700 rounded-full" title="Configurações">
                     <i data-lucide="settings"></i>
                 </button>
                 <button v-if="user" @click="logout" class="p-2 hover:bg-blue-700 rounded-full" title="Sair">
@@ -60,7 +66,7 @@
         </div>
     </nav>
 
-    <!-- Login Screen -->
+    <!-- CASO 1: Usuário NÃO Logado -->
     <div v-if="!user" class="flex-grow flex items-center justify-center p-4">
         <div class="bg-white p-8 rounded-xl shadow-lg max-w-md w-full text-center">
             <div class="mb-6 text-blue-600 flex justify-center">
@@ -72,13 +78,36 @@
             <button @click="login" class="w-full bg-blue-600 text-white py-3 rounded-lg hover:bg-blue-700 font-semibold flex items-center justify-center gap-2 mb-4">
                 <i data-lucide="log-in"></i> Entrar com Google
             </button>
+
+            <!-- Botão de Logout preventivo na tela de login -->
+            <button @click="logout" class="text-sm text-gray-400 hover:text-red-500 underline mt-2">
+                Limpar sessão / Sair
+            </button>
         </div>
     </div>
 
-    <!-- Main App -->
+    <!-- CASO 2: Usuário Logado mas NÃO AUTORIZADO -->
+    <div v-else-if="user && !isAuthorized" class="flex-grow flex items-center justify-center p-4">
+        <div class="bg-white p-8 rounded-xl shadow-lg max-w-md w-full text-center border-l-4 border-red-500">
+            <div class="mb-4 text-red-500 flex justify-center">
+                <i data-lucide="lock" size="48" class="w-16 h-16"></i>
+            </div>
+            <h2 class="text-xl font-bold mb-2 text-gray-800">Acesso Negado</h2>
+            <p class="text-gray-600 mb-4">
+                O e-mail <b>{{ user.email }}</b> não tem permissão para acessar este sistema.
+            </p>
+            <p class="text-sm text-gray-400 mb-6">Entre em contato com o administrador ou troque de conta.</p>
+            
+            <button @click="logout" class="w-full bg-red-600 text-white py-3 rounded-lg hover:bg-red-700 font-semibold flex items-center justify-center gap-2">
+                <i data-lucide="log-out"></i> Sair e Trocar Conta
+            </button>
+        </div>
+    </div>
+
+    <!-- CASO 3: Usuário Logado E Autorizado (App Principal) -->
     <div v-else class="flex-grow max-w-7xl w-full mx-auto p-4 flex flex-col lg:flex-row gap-6">
         
-        <!-- Coluna Esquerda: Controles e Legenda -->
+        <!-- Coluna Esquerda: Controles -->
         <aside class="w-full lg:w-1/4 flex flex-col gap-6 no-print">
             
             <!-- Seletor de Mês -->
@@ -94,23 +123,29 @@
                     <button @click="showSettings = true" class="text-xs text-blue-500 hover:underline">Editar</button>
                 </div>
                 <div class="space-y-2 text-sm max-h-60 overflow-y-auto">
-                    <div v-for="code in codes" :key="code.id" class="flex justify-between items-center border-b pb-1 last:border-0">
-                        <div>
+                    <div v-for="code in codes" :key="code.id" class="flex flex-col border-b pb-1 last:border-0">
+                        <div class="flex justify-between items-center">
                             <span class="font-bold text-blue-600 bg-blue-50 px-1 rounded">Cod {{ code.code }}</span>
-                            <span class="ml-2 text-gray-600">{{ code.start }} - {{ code.end }}</span>
+                            <span class="text-xs font-semibold bg-gray-100 px-2 py-0.5 rounded">{{ code.duration }}h</span>
                         </div>
-                        <span class="text-xs font-semibold bg-gray-100 px-2 py-0.5 rounded">{{ code.duration }}h</span>
+                        <div class="text-gray-600 text-xs ml-1">
+                            {{ code.start }} às {{ code.end }}
+                            <span v-if="code.start2 && code.end2"> / {{ code.start2 }} às {{ code.end2 }}</span>
+                        </div>
                     </div>
                 </div>
             </div>
 
-            <!-- Ajustes Mensais (Noturno) -->
+            <!-- Ajustes Mensais -->
             <div class="bg-white p-4 rounded-lg shadow">
                 <h3 class="font-bold text-gray-700 mb-2">Ajuste Mensal (Noturno)</h3>
                 <p class="text-xs text-gray-500 mb-3">Marque quem fez plantão noturno este mês (-18h).</p>
                 <div class="space-y-2">
                     <div v-for="doc in doctors" :key="doc.id" class="flex items-center justify-between">
-                        <span class="text-sm">{{ doc.name }}</span>
+                        <div class="flex items-center gap-2">
+                            <div class="w-3 h-3 rounded-full" :style="{ backgroundColor: getDoctorColor(doc.id) }"></div>
+                            <span class="text-sm">{{ doc.name }}</span>
+                        </div>
                         <label class="relative inline-flex items-center cursor-pointer">
                             <input type="checkbox" 
                                    :checked="getAdjustment(doc.id)" 
@@ -122,16 +157,21 @@
                 </div>
             </div>
 
-            <!-- Botão Exportar -->
-            <button @click="exportToCSV" class="w-full bg-green-600 text-white py-2 rounded shadow hover:bg-green-700 flex justify-center gap-2">
-                <i data-lucide="download"></i> Exportar CSV
-            </button>
+            <!-- Botões Exportar -->
+            <div class="flex flex-col gap-2">
+                <button @click="exportToPDF" class="w-full bg-red-600 text-white py-2 rounded shadow hover:bg-red-700 flex justify-center gap-2 items-center">
+                    <i data-lucide="file-text"></i> Exportar PDF
+                </button>
+                <button @click="exportToXLS" class="w-full bg-green-600 text-white py-2 rounded shadow hover:bg-green-700 flex justify-center gap-2 items-center">
+                    <i data-lucide="sheet"></i> Exportar Planilha (ODS/XLS)
+                </button>
+            </div>
         </aside>
 
-        <!-- Coluna Direita: Escala e Totais -->
+        <!-- Coluna Direita: Grade -->
         <main class="w-full lg:w-3/4 flex flex-col gap-6">
             
-            <!-- Resumo de Horas (Anual e Mensal) -->
+            <!-- Resumo de Horas -->
             <div class="bg-white p-4 rounded-lg shadow overflow-x-auto">
                 <h3 class="font-bold text-lg mb-3">Banco de Horas (Estimado)</h3>
                 <table class="w-full text-sm text-left">
@@ -145,7 +185,10 @@
                     </thead>
                     <tbody>
                         <tr v-for="doc in doctors" :key="doc.id" class="border-b hover:bg-gray-50">
-                            <td class="px-3 py-2 font-medium">{{ doc.name }}</td>
+                            <td class="px-3 py-2 font-medium flex items-center gap-2">
+                                <div class="w-3 h-3 rounded-full" :style="{ backgroundColor: getDoctorColor(doc.id) }"></div>
+                                {{ doc.name }}
+                            </td>
                             <td class="px-3 py-2 text-center">{{ calculateMonthlyHours(doc.id) }}h</td>
                             <td class="px-3 py-2 text-center text-red-500">
                                 {{ getAdjustment(doc.id) ? '-18h' : '-' }}
@@ -166,7 +209,7 @@
                 </div>
 
                 <div class="overflow-x-auto">
-                    <table class="w-full text-sm border-collapse">
+                    <table class="w-full text-sm border-collapse" id="scheduleTable">
                         <thead>
                             <tr class="bg-gray-100 text-gray-600">
                                 <th class="border p-2 w-16 text-center">Dia</th>
@@ -179,7 +222,6 @@
                             <tr v-for="day in daysInMonth" :key="day.dateStr" 
                                 :class="{ 'weekend-bg': day.isWeekend, 'holiday-bg': day.isHoliday }">
                                 
-                                <!-- Dia (Clicável para Feriado) -->
                                 <td @click="toggleHoliday(day.dateStr)" 
                                     class="border p-2 text-center font-bold cursor-pointer hover:bg-red-100 select-none"
                                     title="Clique para alternar Feriado">
@@ -191,26 +233,24 @@
                                     <span v-if="day.isHoliday" class="block text-red-500 font-bold text-[10px]">FERIADO</span>
                                 </td>
                                 
-                                <!-- Plantões -->
                                 <td class="border p-2">
                                     <div class="flex flex-wrap gap-2">
                                         <div v-for="(shift, idx) in getShiftsForDay(day.dateStr)" :key="idx" 
-                                             class="flex items-center bg-white border rounded shadow-sm px-2 py-1">
-                                            <span class="font-bold text-blue-600 mr-2" :title="getShiftTooltip(shift.codeId)">
-                                                {{ shift.codeId }}
+                                             class="flex items-center doctor-chip bg-white border rounded shadow-sm px-2 py-1"
+                                             :style="{ borderLeft: '4px solid ' + getDoctorColor(shift.doctorId) }">
+                                            <span class="font-bold text-gray-700 mr-2" :title="getShiftTooltip(shift.codeId)">
+                                                Cod {{ shift.codeId }}
                                             </span>
-                                            <span class="mr-2 text-gray-800">{{ getDoctorName(shift.doctorId) }}</span>
+                                            <span class="mr-2 font-medium" :style="{ color: getDoctorColor(shift.doctorId) }">
+                                                {{ getDoctorName(shift.doctorId) }}
+                                            </span>
                                             <button @click="removeShift(day.dateStr, idx)" class="text-red-400 hover:text-red-600 ml-auto no-print">
                                                 <i data-lucide="x" class="w-3 h-3"></i>
                                             </button>
                                         </div>
-                                        <span v-if="getShiftsForDay(day.dateStr).length === 0" class="text-gray-400 italic text-xs p-1">
-                                            Sem plantões
-                                        </span>
                                     </div>
                                 </td>
 
-                                <!-- Botão Adicionar -->
                                 <td class="border p-2 text-center no-print">
                                     <button @click="openAddModal(day.dateStr)" class="bg-blue-100 text-blue-600 p-1.5 rounded hover:bg-blue-200">
                                         <i data-lucide="plus" class="w-4 h-4"></i>
@@ -233,7 +273,7 @@
                 <label class="block text-sm font-medium mb-1">Código do Plantão</label>
                 <select v-model="newShift.codeId" class="w-full border rounded p-2 bg-white">
                     <option v-for="code in codes" :key="code.id" :value="code.code">
-                        {{ code.code }} - ({{ code.start }} às {{ code.end }}) - {{ code.duration }}h
+                        {{ code.code }} - {{ getCodeDescription(code) }}
                     </option>
                 </select>
             </div>
@@ -245,9 +285,6 @@
                         {{ doc.name }}
                     </option>
                 </select>
-                <p v-if="hasDoctorConflict" class="text-red-500 text-xs mt-1">
-                    ⚠ Este médico já está escalado neste dia em outro código.
-                </p>
             </div>
 
             <div class="flex justify-end gap-3">
@@ -261,8 +298,8 @@
 
     <!-- Modal: Configurações Globais -->
     <div v-if="showSettings" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-        <div class="bg-white rounded-lg shadow-xl w-full max-w-2xl p-6 h-[80vh] overflow-y-auto">
-            <div class="flex justify-between items-center mb-6">
+        <div class="bg-white rounded-lg shadow-xl w-full max-w-4xl p-6 h-[85vh] flex flex-col">
+            <div class="flex justify-between items-center mb-4">
                 <h2 class="text-2xl font-bold">Configurações</h2>
                 <button @click="showSettings = false" class="text-gray-500 hover:text-gray-700">
                     <i data-lucide="x"></i>
@@ -275,49 +312,68 @@
                 <button @click="activeTab = 'codes'" :class="['px-4 py-2', activeTab === 'codes' ? 'border-b-2 border-blue-500 font-bold' : '']">Códigos</button>
             </div>
 
-            <!-- Tab: Médicos (Sempre visível se user existe) -->
-            <div v-if="activeTab === 'doctors'" class="space-y-4">
-                <div class="flex gap-2">
-                    <input v-model="newDoctorName" @keyup.enter="addDoctor" placeholder="Nome do Médico" class="flex-grow border p-2 rounded">
-                    <button @click="addDoctor" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Adicionar</button>
+            <div class="flex-grow overflow-y-auto">
+                <!-- Tab: Médicos -->
+                <div v-if="activeTab === 'doctors'" class="space-y-4">
+                    <div class="flex gap-2">
+                        <input v-model="newDoctorName" @keyup.enter="addDoctor" placeholder="Nome do Médico" class="flex-grow border p-2 rounded">
+                        <button @click="addDoctor" class="bg-green-600 text-white px-4 py-2 rounded hover:bg-green-700">Adicionar</button>
+                    </div>
+                    <ul class="divide-y">
+                        <li v-for="(doc, idx) in doctors" :key="doc.id" class="py-2 flex justify-between items-center">
+                            <div class="flex items-center gap-2 w-full">
+                                <div class="w-4 h-4 rounded-full flex-shrink-0" :style="{ backgroundColor: getDoctorColor(doc.id) }"></div>
+                                <input v-model="doc.name" @change="saveGlobalData" class="border-none bg-transparent focus:bg-gray-50 p-1 w-full">
+                            </div>
+                            <button @click="removeDoctor(idx)" class="text-red-500 hover:text-red-700 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
+                        </li>
+                    </ul>
                 </div>
-                <ul class="divide-y">
-                    <li v-for="(doc, idx) in doctors" :key="doc.id" class="py-2 flex justify-between items-center">
-                        <input v-model="doc.name" @change="saveGlobalData" class="border-none bg-transparent focus:bg-gray-50 p-1">
-                        <button @click="removeDoctor(idx)" class="text-red-500 hover:text-red-700 p-1"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
-                    </li>
-                </ul>
+
+                <!-- Tab: Códigos (Novo Layout) -->
+                <div v-if="activeTab === 'codes'" class="space-y-4">
+                    <p class="text-xs text-gray-500 mb-2">Para códigos com intervalo único, preencha apenas Início/Fim 1. Para códigos fracionados (ex: 7-13 e 21-7), preencha também o 2.</p>
+                    
+                    <!-- Header -->
+                    <div class="grid grid-cols-12 gap-2 text-xs font-bold bg-gray-100 p-2 rounded text-center">
+                        <div class="col-span-1">Cód</div>
+                        <div class="col-span-2">Início 1</div>
+                        <div class="col-span-2">Fim 1</div>
+                        <div class="col-span-2 text-blue-600">Início 2 (Op)</div>
+                        <div class="col-span-2 text-blue-600">Fim 2 (Op)</div>
+                        <div class="col-span-2">Horas</div>
+                        <div class="col-span-1">Ação</div>
+                    </div>
+
+                    <!-- Input Novo Código -->
+                    <div class="grid grid-cols-12 gap-2 items-center bg-blue-50 p-2 rounded">
+                        <div class="col-span-1"><input v-model="newCode.code" type="number" class="w-full border p-1 rounded text-center" placeholder="#"></div>
+                        <div class="col-span-2"><input v-model="newCode.start" type="time" class="w-full border p-1 rounded"></div>
+                        <div class="col-span-2"><input v-model="newCode.end" type="time" class="w-full border p-1 rounded"></div>
+                        <div class="col-span-2"><input v-model="newCode.start2" type="time" class="w-full border p-1 rounded"></div>
+                        <div class="col-span-2"><input v-model="newCode.end2" type="time" class="w-full border p-1 rounded"></div>
+                        <div class="col-span-2"><input v-model="newCode.duration" type="number" class="w-full border p-1 rounded text-center" placeholder="h"></div>
+                        <div class="col-span-1 text-center"><button @click="addCode" class="bg-green-600 text-white p-1 rounded"><i data-lucide="plus" class="w-4 h-4"></i></button></div>
+                    </div>
+
+                    <!-- Lista de Códigos -->
+                    <div v-for="(code, idx) in codes" :key="code.id" class="grid grid-cols-12 gap-2 items-center border-b py-2 text-sm">
+                        <div class="col-span-1"><input v-model="code.code" type="number" class="w-full border p-1 rounded text-center" @change="saveGlobalData"></div>
+                        <div class="col-span-2"><input v-model="code.start" type="time" class="w-full border p-1 rounded" @change="saveGlobalData"></div>
+                        <div class="col-span-2"><input v-model="code.end" type="time" class="w-full border p-1 rounded" @change="saveGlobalData"></div>
+                        <div class="col-span-2"><input v-model="code.start2" type="time" class="w-full border p-1 rounded" @change="saveGlobalData"></div>
+                        <div class="col-span-2"><input v-model="code.end2" type="time" class="w-full border p-1 rounded" @change="saveGlobalData"></div>
+                        <div class="col-span-2"><input v-model="code.duration" type="number" class="w-full border p-1 rounded text-center" @change="saveGlobalData"></div>
+                        <div class="col-span-1 text-center"><button @click="removeCode(idx)" class="text-red-500 hover:text-red-700"><i data-lucide="trash-2" class="w-4 h-4"></i></button></div>
+                    </div>
+                </div>
             </div>
 
-            <!-- Tab: Códigos (Sempre visível se user existe) -->
-            <div v-if="activeTab === 'codes'" class="space-y-4">
-                <div class="grid grid-cols-5 gap-2 items-end bg-gray-50 p-2 rounded">
-                    <div class="col-span-1">
-                        <label class="text-xs">Cód</label>
-                        <input v-model="newCode.code" type="number" class="w-full border p-1 rounded">
-                    </div>
-                    <div class="col-span-1">
-                        <label class="text-xs">Início</label>
-                        <input v-model="newCode.start" type="time" class="w-full border p-1 rounded">
-                    </div>
-                    <div class="col-span-1">
-                        <label class="text-xs">Fim</label>
-                        <input v-model="newCode.end" type="time" class="w-full border p-1 rounded">
-                    </div>
-                    <div class="col-span-1">
-                        <label class="text-xs">Duração (h)</label>
-                        <input v-model="newCode.duration" type="number" class="w-full border p-1 rounded">
-                    </div>
-                    <button @click="addCode" class="bg-green-600 text-white p-1.5 rounded hover:bg-green-700 h-9"><i data-lucide="plus"></i></button>
-                </div>
-
-                <div v-for="(code, idx) in codes" :key="code.id" class="grid grid-cols-5 gap-2 items-center border-b py-2">
-                    <input v-model="code.code" type="number" class="border p-1 rounded" @change="saveGlobalData">
-                    <input v-model="code.start" type="time" class="border p-1 rounded" @change="saveGlobalData">
-                    <input v-model="code.end" type="time" class="border p-1 rounded" @change="saveGlobalData">
-                    <input v-model="code.duration" type="number" class="border p-1 rounded" @change="saveGlobalData">
-                    <button @click="removeCode(idx)" class="text-red-500 hover:text-red-700 flex justify-center"><i data-lucide="trash-2" class="w-4 h-4"></i></button>
-                </div>
+            <!-- Footer com Botão Fechar -->
+            <div class="mt-4 pt-4 border-t flex justify-end">
+                <button @click="showSettings = false" class="bg-gray-200 text-gray-800 px-6 py-2 rounded hover:bg-gray-300 font-bold">
+                    Fechar
+                </button>
             </div>
         </div>
     </div>
@@ -327,7 +383,7 @@
 <script>
     const { createApp, ref, computed, onMounted, watch } = Vue;
 
-    // Configuração Hardcoded (Inserida conforme solicitado)
+    // Configuração Hardcoded
     const firebaseConfig = {
       apiKey: "AIzaSyACwzDAdMH3PiROTtoGzhnA6XIRBgqTntA",
       authDomain: "sobreaviso-sarah.firebaseapp.com",
@@ -348,32 +404,38 @@
             const activeTab = ref('doctors');
             const showAddModal = ref(false);
             const selectedDateToAdd = ref('');
-            
-            // Allowlist de E-mails
             const allowedEmails = ['douglasrgomes@gmail.com', 'douglas20221690@gmail.com'];
 
-            // Dados Globais (Config)
+            // Dados
             const doctors = ref([]);
             const codes = ref([]);
-            
-            // Dados Mensais (Schedule)
             const schedule = ref({});
             const holidays = ref([]);
             const adjustments = ref({});
             const annualTotals = ref({});
 
+            // Paleta de cores para médicos (Vibrantes e Distintas)
+            const doctorColors = [
+                '#DC2626', '#EA580C', '#D97706', '#65A30D', '#059669', 
+                '#0891B2', '#0284C7', '#4F46E5', '#7C3AED', '#C026D3', 
+                '#DB2777', '#E11D48', '#57534E', '#4B5563'
+            ];
+
             // Inputs Temporários
             const newDoctorName = ref('');
-            const newCode = ref({ code: '', start: '07:00', end: '19:00', duration: 12 });
+            // Código agora suporta 2 horários
+            const newCode = ref({ code: '', start: '07:00', end: '13:00', start2: '', end2: '', duration: 12 });
             const newShift = ref({ codeId: '', doctorId: '' });
 
-            // Inicialização
+            const isAuthorized = computed(() => {
+                return user.value && allowedEmails.includes(user.value.email);
+            });
+
             onMounted(() => {
                 initializeFirebase();
                 lucide.createIcons();
             });
 
-            // Monitora o estado de login
             watch(user, (newUser) => {
                 if (!newUser) {
                     activeTab.value = 'doctors';
@@ -383,26 +445,17 @@
                 }
             });
 
-            // Firebase Init
+            // Firebase Logic
             const initializeFirebase = () => {
                 try {
-                    if (!firebase.apps.length) {
-                        firebase.initializeApp(firebaseConfig);
-                    }
+                    if (!firebase.apps.length) firebase.initializeApp(firebaseConfig);
                     auth.value = firebase.auth();
                     db.value = firebase.firestore();
                     
                     auth.value.onAuthStateChanged((u) => {
-                        // Verificação de segurança no Front-end
-                        if (u && !allowedEmails.includes(u.email)) {
-                            alert(`Acesso negado. O e-mail ${u.email} não tem permissão para acessar este sistema.`);
-                            auth.value.signOut();
-                            user.value = null;
-                            return;
-                        }
-
                         user.value = u;
-                        if (u) {
+                        // Modificado: Se tiver usuário E ele for autorizado, carrega dados
+                        if (u && allowedEmails.includes(u.email)) {
                             loadGlobalData();
                             loadMonthData();
                             calculateAnnualTotals(); 
@@ -410,7 +463,6 @@
                     });
                 } catch (e) {
                     console.error("Erro Firebase", e);
-                    alert("Erro ao conectar no Firebase. Verifique o console.");
                 }
             };
 
@@ -420,23 +472,10 @@
                 try {
                     await auth.value.signInWithPopup(provider);
                 } catch (e) {
-                    // CORREÇÃO: Se o usuário já está logado (user.value ou auth.currentUser existe),
-                    // então o erro foi um falso positivo do popup. Ignora e retorna.
-                    if (user.value || auth.value.currentUser) {
-                        console.warn("Erro de auth ignorado pois usuário já logou com sucesso:", e.message);
-                        return;
-                    }
-
+                    if (user.value || auth.value.currentUser) return; // Ignora falso positivo
                     if (e.code === 'auth/unauthorized-domain') {
-                        const domain = window.location.hostname;
-                        alert(`ERRO DE DOMÍNIO:\n\nAdicione o domínio '${domain}' no console do Firebase > Auth > Settings > Authorized domains.`);
-                    } else if (e.code === 'auth/internal-error') {
-                         console.error("Erro interno (provável falso positivo):", e);
-                         // Só alerta se realmente não tiver logado
-                         if (!user.value) {
-                             alert("Erro de conexão com o Google. Se você não entrou, tente novamente.");
-                         }
-                    } else {
+                        alert(`ERRO DE DOMÍNIO: Adicione '${window.location.hostname}' no Firebase Console.`);
+                    } else if (e.code !== 'auth/internal-error') {
                         alert("Erro no login: " + e.message);
                     }
                 }
@@ -447,50 +486,37 @@
                 user.value = null;
                 doctors.value = [];
                 codes.value = [];
-                schedule.value = {};
             };
 
             // Gerenciamento de Dados
             const loadGlobalData = async () => {
                 if (!db.value) return;
-                try {
-                    const doc = await db.value.collection('config').doc('main').get();
-                    if (doc.exists) {
-                        const data = doc.data();
-                        doctors.value = data.doctors || [];
-                        codes.value = data.codes || [];
-                    } else {
-                        // Dados Iniciais
-                        doctors.value = [{id: '1', name: 'Médico A'}, {id: '2', name: 'Médico B'}];
-                        codes.value = [
-                            {id: 1, code: 1, start: '07:00', end: '19:00', duration: 12},
-                            {id: 2, code: 2, start: '19:00', end: '07:00', duration: 12},
-                            {id: 3, code: 3, start: '07:00', end: '13:00', duration: 6}
-                        ];
-                        saveGlobalData();
-                    }
-                } catch (error) {
-                    console.error("Erro ao carregar dados globais:", error);
+                const doc = await db.value.collection('config').doc('main').get();
+                if (doc.exists) {
+                    const data = doc.data();
+                    doctors.value = data.doctors || [];
+                    codes.value = data.codes || [];
+                } else {
+                    // Padrão Inicial
+                    doctors.value = [{id: '1', name: 'Médico A'}, {id: '2', name: 'Médico B'}];
+                    codes.value = [
+                        {id: 1, code: 1, start: '07:00', end: '13:00', start2: '21:00', end2: '07:00', duration: 16} // Exemplo fracionado
+                    ];
+                    saveGlobalData();
                 }
             };
 
             const saveGlobalData = async () => {
                 if (!db.value) return;
-                try {
-                    await db.value.collection('config').doc('main').set({
-                        doctors: doctors.value,
-                        codes: codes.value
-                    });
-                } catch (e) {
-                    console.error("Erro ao salvar:", e);
-                    alert("Erro ao salvar. Verifique se você tem permissão de escrita.");
-                }
+                await db.value.collection('config').doc('main').set({
+                    doctors: doctors.value,
+                    codes: codes.value
+                });
             };
 
             const loadMonthData = async () => {
                 if (!db.value) return;
                 const docRef = db.value.collection('schedules').doc(currentMonthStr.value);
-                
                 docRef.onSnapshot((doc) => {
                     if (doc.exists) {
                         const data = doc.data();
@@ -503,10 +529,7 @@
                         adjustments.value = {};
                     }
                     setTimeout(() => lucide.createIcons(), 100);
-                }, (error) => {
-                    // Silently handle read errors on login screen
                 });
-
                 calculateAnnualTotals(); 
             };
 
@@ -520,7 +543,7 @@
                 calculateAnnualTotals();
             };
 
-            // Lógica de Negócio
+            // Lógica Médicos/Códigos
             const addDoctor = () => {
                 if (!newDoctorName.value) return;
                 doctors.value.push({ id: Date.now().toString(), name: newDoctorName.value });
@@ -537,7 +560,8 @@
                 if (!newCode.value.code) return;
                 codes.value.push({ ...newCode.value, id: Date.now() });
                 saveGlobalData();
-                newCode.value = { code: '', start: '07:00', end: '19:00', duration: 12 };
+                // Reset form
+                newCode.value = { code: '', start: '07:00', end: '13:00', start2: '', end2: '', duration: 12 };
             };
 
             const removeCode = (idx) => {
@@ -545,7 +569,18 @@
                 saveGlobalData();
             };
 
-            // Computados para Calendário
+            // Cores Automáticas
+            const getDoctorColor = (docId) => {
+                // Tenta achar o índice do médico para dar uma cor estável
+                const index = doctors.value.findIndex(d => d.id === docId);
+                if (index >= 0) {
+                    return doctorColors[index % doctorColors.length];
+                }
+                // Fallback para médicos deletados que ainda estão na escala
+                return '#9CA3AF';
+            };
+
+            // Calendário
             const daysInMonth = computed(() => {
                 const [year, month] = currentMonthStr.value.split('-').map(Number);
                 const date = new Date(year, month - 1, 1);
@@ -567,7 +602,6 @@
                 return days;
             });
 
-            // Operações na Escala
             const toggleHoliday = (dateStr) => {
                 const idx = holidays.value.indexOf(dateStr);
                 if (idx > -1) holidays.value.splice(idx, 1);
@@ -592,7 +626,6 @@
                     alert("Já existe um médico para este código neste dia.");
                     return;
                 }
-
                 schedule.value[date].push({ ...newShift.value });
                 saveMonthData();
                 showAddModal.value = false;
@@ -603,16 +636,19 @@
                 saveMonthData();
             };
 
-            const hasDoctorConflict = computed(() => {
-                const date = selectedDateToAdd.value;
-                if (!schedule.value[date]) return false;
-                return false; 
-            });
-
-            const getDoctorName = (id) => doctors.value.find(d => d.id === id)?.name || 'Desconhecido';
+            // Helpers
+            const getDoctorName = (id) => doctors.value.find(d => d.id === id)?.name || '???';
+            
             const getShiftTooltip = (codeId) => {
                 const c = codes.value.find(c => c.code == codeId);
-                return c ? `${c.start} - ${c.end} (${c.duration}h)` : '';
+                return c ? getCodeDescription(c) : '';
+            };
+
+            const getCodeDescription = (c) => {
+                let desc = `${c.start}-${c.end}`;
+                if (c.start2 && c.end2) desc += ` / ${c.start2}-${c.end2}`;
+                desc += ` (${c.duration}h)`;
+                return desc;
             };
 
             const toggleAdjustment = (docId) => {
@@ -642,7 +678,6 @@
                 if (!db.value) return;
                 const year = currentMonthStr.value.split('-')[0];
                 const totals = {};
-
                 const start = `${year}-01`;
                 const end = `${year}-12`;
                 
@@ -667,80 +702,153 @@
                                 }
                             });
                         });
-
                         Object.keys(monthAdj).forEach(docId => {
                             if (monthAdj[docId] && totals[docId] !== undefined) {
                                 totals[docId] -= 18;
                             }
                         });
                     });
-
                     annualTotals.value = totals;
-                } catch (e) {
-                    console.error("Erro calculando anual", e);
-                }
+                } catch (e) { console.error(e); }
             };
 
             const calculateAnnualHours = (docId) => annualTotals.value[docId] || 0;
+            const formatMonthYear = (str) => { const [y, m] = str.split('-'); return `${m}/${y}`; };
+            const formatDateShort = (str) => { if(!str) return ''; const [y, m, d] = str.split('-'); return `${d}/${m}`; };
 
-            // Utils e Export
-            const formatMonthYear = (str) => {
-                const [y, m] = str.split('-');
-                return `${m}/${y}`;
-            };
-            const formatDateShort = (str) => {
-                if(!str) return '';
-                const [y, m, d] = str.split('-');
-                return `${d}/${m}`;
-            };
+            // --- EXPORTAÇÃO ---
 
-            const exportToCSV = () => {
-                let csvContent = "data:text/csv;charset=utf-8,";
-                csvContent += "Dia,Semana,Codigo,Inicio,Fim,Horas,Medico,Feriado\n";
+            const exportToPDF = () => {
+                const { jsPDF } = window.jspdf;
+                const doc = new jsPDF();
 
+                // Título
+                doc.setFontSize(16);
+                doc.text(`Escala de Sobreaviso - ${formatMonthYear(currentMonthStr.value)}`, 14, 20);
+
+                // Tabela Principal
+                const tableData = [];
                 daysInMonth.value.forEach(day => {
                     const shifts = getShiftsForDay(day.dateStr);
-                    const isHolidayStr = day.isHoliday ? "SIM" : "NAO";
+                    const isHol = day.isHoliday ? " (FERIADO)" : "";
                     
                     if (shifts.length === 0) {
-                        csvContent += `${day.day}/${formatMonthYear(currentMonthStr.value)},${day.weekDay},,,,,,${isHolidayStr}\n`;
+                        tableData.push([`${day.day}`, `${day.weekDay}${isHol}`, "-", "-", "-", "-"]);
                     } else {
                         shifts.forEach(shift => {
                             const code = codes.value.find(c => c.code == shift.codeId);
+                            const timeStr = code ? getCodeDescription(code) : '-';
                             const docName = getDoctorName(shift.doctorId);
-                            csvContent += `${day.day}/${formatMonthYear(currentMonthStr.value)},${day.weekDay},${code?.code || ''},${code?.start || ''},${code?.end || ''},${code?.duration || ''},${docName},${isHolidayStr}\n`;
+                            tableData.push([`${day.day}`, `${day.weekDay}${isHol}`, code?.code, timeStr, docName]);
                         });
                     }
                 });
 
-                csvContent += "\n\nRESUMO MENSAL\nMedico,Total Mes,Ajuste Noturno,Total Anual (Ate agora)\n";
-                doctors.value.forEach(doc => {
-                    const month = calculateMonthlyHours(doc.id);
-                    const adj = getAdjustment(doc.id) ? "SIM (-18h)" : "NAO";
-                    const annual = calculateAnnualHours(doc.id);
-                    csvContent += `${doc.name},${month},${adj},${annual}\n`;
+                doc.autoTable({
+                    startY: 30,
+                    head: [['Dia', 'Semana', 'Cód', 'Horário', 'Médico']],
+                    body: tableData,
+                    theme: 'grid',
+                    styles: { fontSize: 9 },
+                    headStyles: { fillColor: [37, 99, 235] }
                 });
 
-                const encodedUri = encodeURI(csvContent);
-                const link = document.createElement("a");
-                link.setAttribute("href", encodedUri);
-                link.setAttribute("download", `Escala_${currentMonthStr.value}.csv`);
-                document.body.appendChild(link);
-                link.click();
+                // Tabela Resumo
+                let finalY = doc.lastAutoTable.finalY + 15;
+                doc.text("Resumo Mensal e Anual", 14, finalY);
+                
+                const summaryData = doctors.value.map(d => [
+                    d.name,
+                    `${calculateMonthlyHours(d.id)}h`,
+                    getAdjustment(d.id) ? "SIM (-18h)" : "Não",
+                    `${calculateAnnualHours(d.id)}h`
+                ]);
+
+                doc.autoTable({
+                    startY: finalY + 5,
+                    head: [['Médico', 'Total Mês', 'Noturno', 'Total Anual']],
+                    body: summaryData,
+                    theme: 'striped',
+                    headStyles: { fillColor: [22, 163, 74] }
+                });
+
+                doc.save(`Escala_${currentMonthStr.value}.pdf`);
+            };
+
+            const exportToXLS = () => {
+                // Estratégia: Criar array de arrays (Matriz) e converter com SheetJS
+                // Cabeçalho
+                const wb = XLSX.utils.book_new();
+                const wsData = [
+                    ["Escala de Sobreaviso", formatMonthYear(currentMonthStr.value)],
+                    [],
+                    ["Dia", "Semana", "Feriado", "Cód", "Início 1", "Fim 1", "Início 2", "Fim 2", "Horas", "Médico"]
+                ];
+
+                // Dados da Grade
+                daysInMonth.value.forEach(day => {
+                    const shifts = getShiftsForDay(day.dateStr);
+                    const isHol = day.isHoliday ? "SIM" : "";
+                    
+                    if (shifts.length === 0) {
+                        wsData.push([day.day, day.weekDay, isHol, "", "", "", "", "", "", ""]);
+                    } else {
+                        shifts.forEach(shift => {
+                            const code = codes.value.find(c => c.code == shift.codeId);
+                            const docName = getDoctorName(shift.doctorId);
+                            
+                            wsData.push([
+                                day.day, 
+                                day.weekDay, 
+                                isHol,
+                                code?.code || '',
+                                code?.start || '',
+                                code?.end || '',
+                                code?.start2 || '',
+                                code?.end2 || '',
+                                code?.duration || '',
+                                docName
+                            ]);
+                        });
+                    }
+                });
+
+                // Espaço e Resumo
+                wsData.push([], [], ["RESUMO DE HORAS"], ["Médico", "Total Mês", "Ajuste Noturno", "Total Anual"]);
+                
+                doctors.value.forEach(d => {
+                    wsData.push([
+                        d.name,
+                        calculateMonthlyHours(d.id),
+                        getAdjustment(d.id) ? "-18h" : "-",
+                        calculateAnnualHours(d.id)
+                    ]);
+                });
+
+                const ws = XLSX.utils.aoa_to_sheet(wsData);
+                
+                // Ajuste de largura de coluna (cosmético)
+                ws['!cols'] = [
+                    {wch: 5}, {wch: 10}, {wch: 8}, {wch: 5}, {wch: 8}, {wch: 8}, {wch: 8}, {wch: 8}, {wch: 6}, {wch: 25}
+                ];
+
+                XLSX.utils.book_append_sheet(wb, ws, "Escala");
+                XLSX.writeFile(wb, `Escala_${currentMonthStr.value}.xls`); // .xls é melhor aceito como "genérico" que .ods por algumas libs, mas Libre abre ambos.
             };
 
             return {
                 user, login, logout,
                 showSettings, activeTab,
                 doctors, newDoctorName, addDoctor, removeDoctor,
-                codes, newCode, addCode, removeCode,
+                codes, newCode, addCode, removeCode, getDoctorColor,
                 currentMonthStr, loadMonthData,
                 daysInMonth, toggleHoliday,
                 showAddModal, openAddModal, selectedDateToAdd, newShift, addShift, removeShift,
-                schedule, getShiftsForDay, getDoctorName, getShiftTooltip, hasDoctorConflict,
+                schedule, getShiftsForDay, getDoctorName, getShiftTooltip, getCodeDescription,
                 toggleAdjustment, getAdjustment,
                 calculateMonthlyHours, calculateAnnualHours,
-                formatMonthYear, formatDateShort, exportToCSV
+                formatMonthYear, formatDateShort, exportToPDF, exportToXLS,
+                isAuthorized
             };
         }
     }).mount('#app');
