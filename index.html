@@ -55,7 +55,7 @@
             <div class="flex gap-4 items-center">
                 <span v-if="user" class="text-sm hidden sm:inline">{{ user.displayName }}</span>
                 
-                <!-- Botões da Navbar (Só aparecem se logado E autorizado, exceto Logout que aparece sempre que logado) -->
+                <!-- Botões da Navbar -->
                 <button v-if="user && isAuthorized" @click="showSettings = true" class="p-2 hover:bg-blue-700 rounded-full" title="Configurações">
                     <i data-lucide="settings"></i>
                 </button>
@@ -175,9 +175,9 @@
                     <thead class="bg-gray-50 text-gray-600 uppercase">
                         <tr>
                             <th class="px-3 py-2">Médico</th>
-                            <th class="px-3 py-2 text-center">Total Mês</th>
+                            <th class="px-3 py-2 text-center" title="Horas apenas do mês selecionado">Total Mês</th>
                             <th class="px-3 py-2 text-center">Ajuste Noturno</th>
-                            <th class="px-3 py-2 text-center font-bold text-blue-700">Total Anual</th>
+                            <th class="px-3 py-2 text-center font-bold text-blue-700" title="Horas acumuladas até o mês selecionado">Total Acumulado</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -248,7 +248,7 @@
                                                 </span>
                                             </div>
 
-                                            <!-- Linha 2: Detalhes do Horário (NOVO) -->
+                                            <!-- Linha 2: Detalhes do Horário -->
                                             <div class="text-[10px] text-gray-500 leading-tight">
                                                 {{ getShiftTimeDetails(shift.codeId) }}
                                             </div>
@@ -420,20 +420,23 @@
             const showAddModal = ref(false);
             const selectedDateToAdd = ref('');
             const allowedEmails = [
-  'douglasrgomes@gmail.com', 
-  'doribegomes@gmail.com', 
-  'douglas20221690@gmail.com', 
-  'douglasborgesfo@gmail.com'
-];
+              'douglasrgomes@gmail.com', 
+              'doribegomes@gmail.com', 
+              'douglas20221690@gmail.com', 
+              'douglasborgesfo@gmail.com'
+            ];
+            
             // Dados
             const doctors = ref([]);
             const codes = ref([]);
             const schedule = ref({});
             const holidays = ref([]);
             const adjustments = ref({});
-            const annualTotals = ref({});
+            
+            // Total Acumulado (Somente meses anteriores)
+            const previousMonthsTotals = ref({});
 
-            // Paleta de cores para médicos (Vibrantes e Distintas)
+            // Paleta de cores para médicos
             const doctorColors = [
                 '#DC2626', '#EA580C', '#D97706', '#65A30D', '#059669', 
                 '#0891B2', '#0284C7', '#4F46E5', '#7C3AED', '#C026D3', 
@@ -442,7 +445,6 @@
 
             // Inputs Temporários
             const newDoctorName = ref('');
-            // Código agora suporta 2 horários
             const newCode = ref({ code: '', start: '07:00', end: '13:00', start2: '', end2: '', duration: 12 });
             const newShift = ref({ codeId: '', doctorId: '' });
             
@@ -455,7 +457,6 @@
             });
 
             // Dados Iniciais (Extraídos da Planilha)
-            // Códigos 16 (13h-19h), 17 (vazio), 18 (vazio)
             const defaultCodes = [
                 {id: 1, code: 1, start: '07:00', end: '13:00', duration: 6},
                 {id: 2, code: 2, start: '15:00', end: '21:00', duration: 6},
@@ -469,12 +470,12 @@
                 {id: 10, code: 10, start: '18:00', end: '07:00', duration: 13},
                 {id: 11, code: 11, start: '07:00', end: '19:00', duration: 12},
                 {id: 12, code: 12, start: '19:00', end: '07:00', duration: 12},
-                {id: 13, code: 13, start: '13:15', end: '19:00', duration: 5.75}, // 5h 45min
-                {id: 14, code: 14, start: '19:15', end: '07:00', duration: 11.75}, // 11h 45min
+                {id: 13, code: 13, start: '13:15', end: '19:00', duration: 5.75}, 
+                {id: 14, code: 14, start: '19:15', end: '07:00', duration: 11.75}, 
                 {id: 15, code: 15, start: '07:00', end: '13:00', start2: '19:00', end2: '07:00', duration: 18},
                 {id: 16, code: 16, start: '13:00', end: '19:00', duration: 6},
-                {id: 17, code: 17, start: '00:00', end: '00:00', duration: 0}, // Placeholder
-                {id: 18, code: 18, start: '00:00', end: '00:00', duration: 0}  // Placeholder
+                {id: 17, code: 17, start: '00:00', end: '00:00', duration: 0},
+                {id: 18, code: 18, start: '00:00', end: '00:00', duration: 0} 
             ];
 
             onMounted(() => {
@@ -500,11 +501,9 @@
                     
                     auth.value.onAuthStateChanged((u) => {
                         user.value = u;
-                        // Modificado: Se tiver usuário E ele for autorizado, carrega dados
                         if (u && allowedEmails.includes(u.email)) {
                             loadGlobalData();
                             loadMonthData();
-                            calculateAnnualTotals(); 
                         }
                     });
                 } catch (e) {
@@ -518,7 +517,7 @@
                 try {
                     await auth.value.signInWithPopup(provider);
                 } catch (e) {
-                    if (user.value || auth.value.currentUser) return; // Ignora falso positivo
+                    if (user.value || auth.value.currentUser) return;
                     if (e.code === 'auth/unauthorized-domain') {
                         alert(`ERRO DE DOMÍNIO: Adicione '${window.location.hostname}' no Firebase Console.`);
                     } else if (e.code !== 'auth/internal-error') {
@@ -534,7 +533,7 @@
                 codes.value = [];
             };
 
-            // Gerenciamento de Dados
+            // Gerenciamento de Dados Globais
             const loadGlobalData = async () => {
                 if (!db.value) return;
                 const doc = await db.value.collection('config').doc('main').get();
@@ -542,20 +541,13 @@
                     const data = doc.data();
                     doctors.value = data.doctors || [];
                     
-                    // Se a lista de códigos no banco estiver vazia ou for muito antiga (padrão antigo),
-                    // vamos atualizar com os novos defaultCodes, preservando o que já existe se for relevante.
-                    // Para simplificar: se não houver códigos, usa o default.
                     if (!data.codes || data.codes.length === 0) {
                         codes.value = defaultCodes;
-                        saveGlobalData(); // Salva a nova lista no banco
+                        saveGlobalData();
                     } else {
                         codes.value = data.codes;
-                        // Se quiser FORÇAR a atualização dos códigos padrão, descomente abaixo:
-                        // Mas cuidado, isso sobrescreve edições manuais do usuário nos códigos.
-                        // codes.value = defaultCodes; 
                     }
                 } else {
-                    // Padrão Inicial
                     doctors.value = [{id: '1', name: 'Médico A'}, {id: '2', name: 'Médico B'}];
                     codes.value = defaultCodes;
                     saveGlobalData();
@@ -570,9 +562,11 @@
                 });
             };
 
+            // Carregamento Mensal 
             const loadMonthData = async () => {
                 if (!db.value) return;
                 const docRef = db.value.collection('schedules').doc(currentMonthStr.value);
+                
                 docRef.onSnapshot((doc) => {
                     if (doc.exists) {
                         const data = doc.data();
@@ -586,7 +580,9 @@
                     }
                     setTimeout(() => lucide.createIcons(), 100);
                 });
-                calculateAnnualTotals(); 
+                
+                // Dispara o cálculo do Histórico/Acumulado assim que mudar o mês
+                calculatePreviousMonthsTotals(); 
             };
 
             const saveMonthData = async () => {
@@ -596,7 +592,7 @@
                     holidays: holidays.value,
                     adjustments: adjustments.value
                 }, { merge: true });
-                calculateAnnualTotals();
+                // Não precisa chamar função de cálculo aqui, pois ela depende do estado "local" e dos meses anteriores já carregados
             };
 
             // Lógica Médicos/Códigos
@@ -616,7 +612,6 @@
                 if (!newCode.value.code) return;
                 codes.value.push({ ...newCode.value, id: Date.now() });
                 saveGlobalData();
-                // Reset form
                 newCode.value = { code: '', start: '07:00', end: '13:00', start2: '', end2: '', duration: 12 };
             };
 
@@ -625,27 +620,20 @@
                 saveGlobalData();
             };
             
-            // Função para resetar códigos manualmente, se necessário
              const resetCodesToDefault = () => {
                 if(confirm("ATENÇÃO: Isso apagará todos os códigos editados e restaurará a lista original da planilha CSV. Deseja continuar?")) {
-                    codes.value = JSON.parse(JSON.stringify(defaultCodes)); // Deep copy para evitar reatividade indesejada na constante
+                    codes.value = JSON.parse(JSON.stringify(defaultCodes));
                     saveGlobalData();
                     alert("Códigos restaurados com sucesso!");
                 }
             };
 
-            // Cores Automáticas
             const getDoctorColor = (docId) => {
-                // Tenta achar o índice do médico para dar uma cor estável
                 const index = doctors.value.findIndex(d => d.id === docId);
-                if (index >= 0) {
-                    return doctorColors[index % doctorColors.length];
-                }
-                // Fallback para médicos deletados que ainda estão na escala
+                if (index >= 0) return doctorColors[index % doctorColors.length];
                 return '#9CA3AF';
             };
 
-            // Calendário
             const daysInMonth = computed(() => {
                 const [year, month] = currentMonthStr.value.split('-').map(Number);
                 const date = new Date(year, month - 1, 1);
@@ -676,7 +664,6 @@
 
             const getShiftsForDay = (dateStr) => schedule.value[dateStr] || [];
 
-            // Abertura do Modal para ADICIONAR (Limpa o form)
             const openAddModal = (dateStr) => {
                 selectedDateToAdd.value = dateStr;
                 newShift.value = { codeId: '', doctorId: '' };
@@ -685,11 +672,10 @@
                 showAddModal.value = true;
             };
 
-            // Abertura do Modal para EDITAR (Carrega dados existentes)
             const openEditModal = (dateStr, idx) => {
                 selectedDateToAdd.value = dateStr;
                 const shift = schedule.value[dateStr][idx];
-                newShift.value = { ...shift }; // Copia os dados
+                newShift.value = { ...shift };
                 isEditing.value = true;
                 editingIndex.value = idx;
                 showAddModal.value = true;
@@ -701,11 +687,11 @@
                 editingIndex.value = -1;
             };
 
+            // Salvar e Remover Plantões - Agora reativos e forçando atualização visual
             const saveShift = () => {
                 const date = selectedDateToAdd.value;
                 if (!schedule.value[date]) schedule.value[date] = [];
                 
-                // Validação de Duplicidade (Só se estiver adicionando ou mudando o código na edição)
                 if (!isEditing || (isEditing.value && schedule.value[date][editingIndex.value].codeId != newShift.value.codeId)) {
                     const existingShift = schedule.value[date].find(s => s.codeId == newShift.value.codeId);
                     if (existingShift) {
@@ -715,23 +701,24 @@
                 }
 
                 if (isEditing.value) {
-                    // Edição: Substitui no índice
                     schedule.value[date][editingIndex.value] = { ...newShift.value };
                 } else {
-                    // Adição: Push no array
                     schedule.value[date].push({ ...newShift.value });
                 }
 
+                // Força o Vue a detectar a alteração em nível profundo
+                schedule.value = { ...schedule.value };
                 saveMonthData();
                 closeModal();
             };
 
             const removeShift = (dateStr, idx) => {
                 schedule.value[dateStr].splice(idx, 1);
+                // Força o Vue a detectar a exclusão para atualizar cálculos instantaneamente
+                schedule.value = { ...schedule.value };
                 saveMonthData();
             };
 
-            // Remove o plantão de dentro do modal de edição
             const deleteShift = () => {
                 if(confirm("Tem certeza que deseja excluir este plantão?")) {
                     removeShift(selectedDateToAdd.value, editingIndex.value);
@@ -747,7 +734,6 @@
                 return c ? getCodeDescription(c) : '';
             };
 
-            // Nova função para mostrar detalhes na grade
             const getShiftTimeDetails = (codeId) => {
                 const c = codes.value.find(c => c.code == codeId);
                 if (!c) return '';
@@ -772,11 +758,15 @@
 
             const toggleAdjustment = (docId) => {
                 adjustments.value[docId] = !adjustments.value[docId];
+                adjustments.value = { ...adjustments.value }; // Força reatividade
                 saveMonthData();
             };
+            
             const getAdjustment = (docId) => !!adjustments.value[docId];
 
             // Cálculos
+            
+            // Cálculo do Mês Atual (Dinâmico, Local e Instantâneo)
             const calculateMonthlyHours = (docId) => {
                 let total = 0;
                 for (const date in schedule.value) {
@@ -793,20 +783,31 @@
                 return total;
             };
 
-            const calculateAnnualTotals = async () => {
+            // Nova Função: Busca apenas as horas de Jan até o mês ANTERIOR ao selecionado
+            const calculatePreviousMonthsTotals = async () => {
                 if (!db.value) return;
                 const year = currentMonthStr.value.split('-')[0];
                 const totals = {};
+                
+                doctors.value.forEach(d => totals[d.id] = 0);
+
+                const [currY, currM] = currentMonthStr.value.split('-').map(Number);
+                
+                // Se o mês for Janeiro, o histórico do ano está zerado.
+                if (currM === 1) {
+                    previousMonthsTotals.value = totals;
+                    return;
+                }
+
                 const start = `${year}-01`;
-                const end = `${year}-12`;
+                const endM = currM - 1;
+                const end = `${currY}-${String(endM).padStart(2, '0')}`;
                 
                 try {
                     const snapshot = await db.value.collection('schedules')
                         .where(firebase.firestore.FieldPath.documentId(), '>=', start)
                         .where(firebase.firestore.FieldPath.documentId(), '<=', end)
                         .get();
-
-                    doctors.value.forEach(d => totals[d.id] = 0);
 
                     snapshot.forEach(doc => {
                         const data = doc.data();
@@ -823,15 +824,24 @@
                         });
                         Object.keys(monthAdj).forEach(docId => {
                             if (monthAdj[docId] && totals[docId] !== undefined) {
-                                totals[docId] += 18; // Antes era -= 18
+                                totals[docId] += 18; 
                             }
                         });
                     });
-                    annualTotals.value = totals;
-                } catch (e) { console.error(e); }
+                    
+                    previousMonthsTotals.value = totals;
+                } catch (e) { console.error("Erro ao calcular meses anteriores", e); }
             };
 
-            const calculateAnnualHours = (docId) => annualTotals.value[docId] || 0;
+            // Total Acumulado = Meses Anteriores (DB) + Mês Atual Local (Instantâneo)
+            const calculateAnnualHours = (docId) => {
+                const previous = previousMonthsTotals.value[docId] || 0;
+                const currentTotal = calculateMonthlyHours(docId);
+                const currentAdj = getAdjustment(docId) ? 18 : 0;
+                
+                return previous + currentTotal + currentAdj;
+            };
+
             const formatMonthYear = (str) => { const [y, m] = str.split('-'); return `${m}/${y}`; };
             const formatDateShort = (str) => { if(!str) return ''; const [y, m, d] = str.split('-'); return `${d}/${m}`; };
 
@@ -841,17 +851,13 @@
                 const { jsPDF } = window.jspdf;
                 const doc = new jsPDF();
 
-                // 1. Preparação de Dados (Mês Atual + Próximo Mês para dias estendidos)
-                // Precisamos buscar o mês seguinte caso a semana termine nele
                 const [currY, currM] = currentMonthStr.value.split('-').map(Number);
                 
-                // Calcula string do próximo mês (ex: "2025-12")
                 let nextY = currY;
                 let nextM = currM + 1;
                 if (nextM > 12) { nextM = 1; nextY++; }
                 const nextMonthStr = `${nextY}-${String(nextM).padStart(2, '0')}`;
 
-                // Busca dados do próximo mês no Firebase
                 let nextMonthSchedule = {};
                 try {
                     const docSnap = await db.value.collection('schedules').doc(nextMonthStr).get();
@@ -862,41 +868,29 @@
                     console.error("Erro ao buscar mês seguinte para relatório", e);
                 }
 
-                // Mescla os dados para uso no relatório
                 const reportSchedule = { ...schedule.value, ...nextMonthSchedule };
-                
-                // Helper local para buscar desse objeto combinado
                 const getShiftsForReport = (date) => reportSchedule[date] || [];
 
-
-                // === CONSTRUÇÃO DO PDF ===
-                
-                // Título
                 doc.setFontSize(16);
                 doc.text(`Escala de Sobreaviso - ${formatMonthYear(currentMonthStr.value)}`, 14, 20);
 
-                // Geração das Linhas da Tabela
                 const tableData = [];
                 let dateIterator = new Date(currY, currM - 1, 1);
                 
                 while (true) {
                     const dateStr = dateIterator.toISOString().split('T')[0];
-                    const dayOfWeek = dateIterator.getDay(); // 0 = Domingo, 1 = Segunda
+                    const dayOfWeek = dateIterator.getDay();
                     const currentIterMonth = dateIterator.getMonth() + 1;
                     
-                    // Condição de Parada: Mudou de mês E é Segunda-feira (já fechou o domingo anterior)
                     if (currentIterMonth !== currM && dayOfWeek === 1) {
                         break; 
                     }
 
-                    // Busca dados (agora usando o objeto combinado reportSchedule)
                     const shifts = getShiftsForReport(dateStr);
-                    
                     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
                     const isHoliday = holidays.value.includes(dateStr);
                     const hasShifts = shifts && shifts.length > 0;
 
-                    // Regra de Exclusão: Mostra se tiver plantão OU for FDS OU for Feriado
                     const shouldShow = hasShifts || isWeekend || isHoliday;
 
                     if (shouldShow) {
@@ -919,7 +913,6 @@
                     dateIterator.setDate(dateIterator.getDate() + 1);
                 }
 
-                // Desenha Tabela Principal
                 doc.autoTable({
                     startY: 30,
                     head: [['Dia', 'Semana', 'Cód', 'Horário', 'Médico']],
@@ -927,22 +920,19 @@
                     theme: 'grid',
                     styles: { fontSize: 9, cellPadding: 2 },
                     headStyles: { fillColor: [37, 99, 235] },
-                    rowPageBreak: 'avoid' // Tenta não quebrar linhas no meio
+                    rowPageBreak: 'avoid'
                 });
-
-                // === RESUMO (Na mesma página se couber) ===
                 
                 let finalY = doc.lastAutoTable.finalY + 15;
                 const pageHeight = doc.internal.pageSize.height;
 
-                // Verifica se tem espaço (aprox 60px para o resumo). Se não, cria nova página.
                 if (finalY + 60 > pageHeight) {
                     doc.addPage();
                     finalY = 20;
                 }
 
                 doc.setFontSize(14);
-                doc.text("Resumo Mensal e Anual", 14, finalY);
+                doc.text("Resumo Mensal e Acumulado", 14, finalY);
                 
                 const summaryData = doctors.value.map(d => [
                     d.name,
@@ -953,7 +943,7 @@
 
                 doc.autoTable({
                     startY: finalY + 5,
-                    head: [['Médico', 'Total Mês', 'Noturno', 'Total Anual']],
+                    head: [['Médico', 'Total Mês', 'Noturno', 'Total Acumulado']],
                     body: summaryData,
                     theme: 'striped',
                     headStyles: { fillColor: [22, 163, 74] }
