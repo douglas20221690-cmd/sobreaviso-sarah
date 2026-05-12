@@ -859,22 +859,27 @@
                 const nextMonthStr = `${nextY}-${String(nextM).padStart(2, '0')}`;
 
                 let nextMonthSchedule = {};
+                let nextMonthHolidays = [];
                 try {
                     const docSnap = await db.value.collection('schedules').doc(nextMonthStr).get();
                     if (docSnap.exists) {
-                        nextMonthSchedule = docSnap.data().schedule || {};
+                        const data = docSnap.data();
+                        nextMonthSchedule = data.schedule || {};
+                        nextMonthHolidays = data.holidays || [];
                     }
                 } catch (e) {
                     console.error("Erro ao buscar mês seguinte para relatório", e);
                 }
 
                 const reportSchedule = { ...schedule.value, ...nextMonthSchedule };
+                const reportHolidays = [...holidays.value, ...nextMonthHolidays];
                 const getShiftsForReport = (date) => reportSchedule[date] || [];
 
                 doc.setFontSize(16);
                 doc.text(`Escala de Sobreaviso - ${formatMonthYear(currentMonthStr.value)}`, 14, 20);
 
                 const tableData = [];
+                const printedDates = []; // Array para rastrear todos os dias impressos
                 let dateIterator = new Date(currY, currM - 1, 1);
                 
                 while (true) {
@@ -882,13 +887,16 @@
                     const dayOfWeek = dateIterator.getDay();
                     const currentIterMonth = dateIterator.getMonth() + 1;
                     
+                    // Condição de parada: virou o mês E completou a semana (chegou na Segunda-feira)
                     if (currentIterMonth !== currM && dayOfWeek === 1) {
                         break; 
                     }
 
+                    printedDates.push(dateStr); // Guarda a data na lista de dias impressos
+
                     const shifts = getShiftsForReport(dateStr);
                     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
-                    const isHoliday = holidays.value.includes(dateStr);
+                    const isHoliday = reportHolidays.includes(dateStr);
                     const hasShifts = shifts && shifts.length > 0;
 
                     const shouldShow = hasShifts || isWeekend || isHoliday;
@@ -932,18 +940,41 @@
                 }
 
                 doc.setFontSize(14);
-                doc.text("Resumo Mensal e Acumulado", 14, finalY);
+                doc.text("Resumo de Horas (Período Impresso)", 14, finalY);
                 
-                const summaryData = doctors.value.map(d => [
-                    d.name,
-                    `${formatDuration(calculateMonthlyHours(d.id))}`,
-                    getAdjustment(d.id) ? "SIM (+18h)" : "Não",
-                    `${formatDuration(calculateAnnualHours(d.id))}`
-                ]);
+                // Cálculo de horas ESPECÍFICO para o PDF, com base apenas nos dias impressos
+                const calculatePdfMonthlyHours = (docId) => {
+                    let total = 0;
+                    printedDates.forEach(date => {
+                        const shifts = getShiftsForReport(date);
+                        shifts.forEach(shift => {
+                            if (shift.doctorId === docId) {
+                                const code = codes.value.find(c => c.code == shift.codeId);
+                                if (code) total += Number(code.duration);
+                            }
+                        });
+                    });
+                    return total;
+                };
+
+                // Monta os dados do resumo usando o cálculo exclusivo do PDF
+                const summaryData = doctors.value.map(d => {
+                    const pdfMonthly = calculatePdfMonthlyHours(d.id);
+                    const previous = previousMonthsTotals.value[d.id] || 0;
+                    const currentAdj = getAdjustment(d.id) ? 18 : 0;
+                    const pdfAnnual = previous + pdfMonthly + currentAdj;
+
+                    return [
+                        d.name,
+                        `${formatDuration(pdfMonthly)}`,
+                        getAdjustment(d.id) ? "SIM (+18h)" : "Não",
+                        `${formatDuration(pdfAnnual)}`
+                    ];
+                });
 
                 doc.autoTable({
                     startY: finalY + 5,
-                    head: [['Médico', 'Total Mês', 'Noturno', 'Total Acumulado']],
+                    head: [['Médico', 'Total do Período', 'Noturno', 'Total Acumulado']],
                     body: summaryData,
                     theme: 'striped',
                     headStyles: { fillColor: [22, 163, 74] }
