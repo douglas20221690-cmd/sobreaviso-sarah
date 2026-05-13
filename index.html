@@ -160,7 +160,7 @@
             <!-- Botões Exportar -->
             <div class="flex flex-col gap-2">
                 <button @click="exportToPDF" class="w-full bg-red-600 text-white py-2 rounded shadow hover:bg-red-700 flex justify-center gap-2 items-center">
-                    <i data-lucide="file-text"></i> Exportar PDF (2 Páginas)
+                    <i data-lucide="file-text"></i> Exportar PDF
                 </button>
             </div>
         </aside>
@@ -581,18 +581,22 @@
                     setTimeout(() => lucide.createIcons(), 100);
                 });
                 
-                // Dispara o cálculo do Histórico/Acumulado assim que mudar o mês
                 calculatePreviousMonthsTotals(); 
             };
 
             const saveMonthData = async () => {
                 if (!db.value) return;
+                
+                // Remove qualquer Proxy do Vue que possa atrapalhar o Firebase
+                const cleanSchedule = JSON.parse(JSON.stringify(schedule.value));
+                const cleanHolidays = JSON.parse(JSON.stringify(holidays.value));
+                const cleanAdjustments = JSON.parse(JSON.stringify(adjustments.value));
+                
                 await db.value.collection('schedules').doc(currentMonthStr.value).set({
-                    schedule: schedule.value,
-                    holidays: holidays.value,
-                    adjustments: adjustments.value
-                }, { merge: true });
-                // Não precisa chamar função de cálculo aqui, pois ela depende do estado "local" e dos meses anteriores já carregados
+                    schedule: cleanSchedule,
+                    holidays: cleanHolidays,
+                    adjustments: cleanAdjustments
+                }); 
             };
 
             // Lógica Médicos/Códigos
@@ -639,9 +643,10 @@
                 const date = new Date(year, month - 1, 1);
                 const days = [];
                 const weekDays = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+                const pad = (n) => String(n).padStart(2, '0');
 
                 while (date.getMonth() === month - 1) {
-                    const dateStr = date.toISOString().split('T')[0];
+                    const dateStr = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
                     const dayOfWeek = date.getDay();
                     days.push({
                         dateStr,
@@ -687,12 +692,11 @@
                 editingIndex.value = -1;
             };
 
-            // Salvar e Remover Plantões - Agora reativos e forçando atualização visual
             const saveShift = () => {
                 const date = selectedDateToAdd.value;
                 if (!schedule.value[date]) schedule.value[date] = [];
                 
-                if (!isEditing || (isEditing.value && schedule.value[date][editingIndex.value].codeId != newShift.value.codeId)) {
+                if (!isEditing.value || (isEditing.value && schedule.value[date][editingIndex.value].codeId != newShift.value.codeId)) {
                     const existingShift = schedule.value[date].find(s => s.codeId == newShift.value.codeId);
                     if (existingShift) {
                         alert("Já existe um médico para este código neste dia.");
@@ -700,22 +704,22 @@
                     }
                 }
 
+                const shiftToSave = JSON.parse(JSON.stringify(newShift.value));
+
                 if (isEditing.value) {
-                    schedule.value[date][editingIndex.value] = { ...newShift.value };
+                    schedule.value[date].splice(editingIndex.value, 1, shiftToSave);
                 } else {
-                    schedule.value[date].push({ ...newShift.value });
+                    schedule.value[date].push(shiftToSave);
                 }
 
-                // Força o Vue a detectar a alteração em nível profundo
-                schedule.value = { ...schedule.value };
+                schedule.value = JSON.parse(JSON.stringify(schedule.value)); 
                 saveMonthData();
                 closeModal();
             };
 
             const removeShift = (dateStr, idx) => {
                 schedule.value[dateStr].splice(idx, 1);
-                // Força o Vue a detectar a exclusão para atualizar cálculos instantaneamente
-                schedule.value = { ...schedule.value };
+                schedule.value = JSON.parse(JSON.stringify(schedule.value));
                 saveMonthData();
             };
 
@@ -758,7 +762,7 @@
 
             const toggleAdjustment = (docId) => {
                 adjustments.value[docId] = !adjustments.value[docId];
-                adjustments.value = { ...adjustments.value }; // Força reatividade
+                adjustments.value = { ...adjustments.value }; 
                 saveMonthData();
             };
             
@@ -766,7 +770,6 @@
 
             // Cálculos
             
-            // Cálculo do Mês Atual (Dinâmico, Local e Instantâneo)
             const calculateMonthlyHours = (docId) => {
                 let total = 0;
                 for (const date in schedule.value) {
@@ -783,57 +786,54 @@
                 return total;
             };
 
-            // Nova Função: Busca apenas as horas de Jan até o mês ANTERIOR ao selecionado
+            // MODIFICADO: Busca explícita mês a mês para forçar o carregamento mesmo no primeiro acesso
             const calculatePreviousMonthsTotals = async () => {
                 if (!db.value) return;
-                const year = currentMonthStr.value.split('-')[0];
-                const totals = {};
-                
-                doctors.value.forEach(d => totals[d.id] = 0);
-
                 const [currY, currM] = currentMonthStr.value.split('-').map(Number);
                 
-                // Se o mês for Janeiro, o histórico do ano está zerado.
+                const totals = {};
+                doctors.value.forEach(d => totals[d.id] = 0);
+
+                // Se for janeiro, o histórico anual é sempre zero
                 if (currM === 1) {
                     previousMonthsTotals.value = totals;
                     return;
                 }
-
-                const start = `${year}-01`;
-                const endM = currM - 1;
-                const end = `${currY}-${String(endM).padStart(2, '0')}`;
                 
                 try {
-                    const snapshot = await db.value.collection('schedules')
-                        .where(firebase.firestore.FieldPath.documentId(), '>=', start)
-                        .where(firebase.firestore.FieldPath.documentId(), '<=', end)
-                        .get();
+                    // Loop forçado pegando mês 1, mês 2... até o mês anterior (currM - 1)
+                    // Isso ignora qualquer problema de cache do Firebase
+                    for (let m = 1; m < currM; m++) {
+                        const monthStr = `${currY}-${String(m).padStart(2, '0')}`;
+                        const docSnap = await db.value.collection('schedules').doc(monthStr).get();
+                        
+                        if (docSnap.exists) {
+                            const data = docSnap.data();
+                            const monthSched = data.schedule || {};
+                            const monthAdj = data.adjustments || {};
 
-                    snapshot.forEach(doc => {
-                        const data = doc.data();
-                        const monthSched = data.schedule || {};
-                        const monthAdj = data.adjustments || {};
-
-                        Object.values(monthSched).forEach(dayShifts => {
-                            dayShifts.forEach(shift => {
-                                const code = codes.value.find(c => c.code == shift.codeId);
-                                if (code && totals[shift.doctorId] !== undefined) {
-                                    totals[shift.doctorId] += Number(code.duration);
+                            Object.values(monthSched).forEach(dayShifts => {
+                                dayShifts.forEach(shift => {
+                                    const code = codes.value.find(c => c.code == shift.codeId);
+                                    if (code && totals[shift.doctorId] !== undefined) {
+                                        totals[shift.doctorId] += Number(code.duration);
+                                    }
+                                });
+                            });
+                            Object.keys(monthAdj).forEach(docId => {
+                                if (monthAdj[docId] && totals[docId] !== undefined) {
+                                    totals[docId] += 18; 
                                 }
                             });
-                        });
-                        Object.keys(monthAdj).forEach(docId => {
-                            if (monthAdj[docId] && totals[docId] !== undefined) {
-                                totals[docId] += 18; 
-                            }
-                        });
-                    });
+                        }
+                    }
                     
                     previousMonthsTotals.value = totals;
-                } catch (e) { console.error("Erro ao calcular meses anteriores", e); }
+                } catch (e) { 
+                    console.error("Erro ao calcular meses anteriores", e); 
+                }
             };
 
-            // Total Acumulado = Meses Anteriores (DB) + Mês Atual Local (Instantâneo)
             const calculateAnnualHours = (docId) => {
                 const previous = previousMonthsTotals.value[docId] || 0;
                 const currentTotal = calculateMonthlyHours(docId);
@@ -848,6 +848,11 @@
             // --- EXPORTAÇÃO ---
 
             const exportToPDF = async () => {
+                // MODIFICADO: Captura o estado IMEDIATAMENTE ao clicar no botão. 
+                // Impede que dados sofram "defasagem" devido ao tempo da conexão com a internet.
+                const reportSchedule = JSON.parse(JSON.stringify(schedule.value));
+                const reportHolidays = [...holidays.value];
+                
                 const { jsPDF } = window.jspdf;
                 const doc = new jsPDF();
 
@@ -860,6 +865,8 @@
 
                 let nextMonthSchedule = {};
                 let nextMonthHolidays = [];
+                
+                // Agora o tempo que o Firebase leva para buscar o próximo mês NÃO AFETA os dias locais que já capturamos acima
                 try {
                     const docSnap = await db.value.collection('schedules').doc(nextMonthStr).get();
                     if (docSnap.exists) {
@@ -871,28 +878,37 @@
                     console.error("Erro ao buscar mês seguinte para relatório", e);
                 }
 
-                const reportSchedule = { ...schedule.value, ...nextMonthSchedule };
-                const reportHolidays = [...holidays.value, ...nextMonthHolidays];
+                // Mesclando SOMENTE os dias que começam com o próximo mês de forma segura
+                for (const date in nextMonthSchedule) {
+                    if (date.startsWith(nextMonthStr)) {
+                        reportSchedule[date] = nextMonthSchedule[date];
+                    }
+                }
+                
+                reportHolidays.push(...nextMonthHolidays);
                 const getShiftsForReport = (date) => reportSchedule[date] || [];
 
                 doc.setFontSize(16);
                 doc.text(`Escala de Sobreaviso - ${formatMonthYear(currentMonthStr.value)}`, 14, 20);
 
                 const tableData = [];
-                const printedDates = []; // Array para rastrear todos os dias impressos
+                const printedDates = []; 
                 let dateIterator = new Date(currY, currM - 1, 1);
+                const pad = (n) => String(n).padStart(2, '0');
                 
                 while (true) {
-                    const dateStr = dateIterator.toISOString().split('T')[0];
-                    const dayOfWeek = dateIterator.getDay();
-                    const currentIterMonth = dateIterator.getMonth() + 1;
+                    const iterY = dateIterator.getFullYear();
+                    const iterM = dateIterator.getMonth() + 1;
+                    const iterD = dateIterator.getDate();
+                    const dateStr = `${iterY}-${pad(iterM)}-${pad(iterD)}`;
                     
-                    // Condição de parada: virou o mês E completou a semana (chegou na Segunda-feira)
-                    if (currentIterMonth !== currM && dayOfWeek === 1) {
+                    const dayOfWeek = dateIterator.getDay();
+                    
+                    if (iterM !== currM && dayOfWeek === 1) {
                         break; 
                     }
 
-                    printedDates.push(dateStr); // Guarda a data na lista de dias impressos
+                    printedDates.push(dateStr); 
 
                     const shifts = getShiftsForReport(dateStr);
                     const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
@@ -907,13 +923,13 @@
                         const holStr = isHoliday ? " (FERIADO)" : "";
                         
                         if (!hasShifts) {
-                            tableData.push([`${dayNum}/${currentIterMonth}`, `${weekDayStr}${holStr}`, "-", "-", "-", "-"]);
+                            tableData.push([`${dayNum}/${iterM}`, `${weekDayStr}${holStr}`, "-", "-", "-", "-"]);
                         } else {
                             shifts.forEach(shift => {
                                 const code = codes.value.find(c => c.code == shift.codeId);
                                 const timeStr = code ? getCodeDescription(code) : '-';
                                 const docName = getDoctorName(shift.doctorId);
-                                tableData.push([`${dayNum}/${currentIterMonth}`, `${weekDayStr}${holStr}`, code?.code, timeStr, docName]);
+                                tableData.push([`${dayNum}/${iterM}`, `${weekDayStr}${holStr}`, code?.code, timeStr, docName]);
                             });
                         }
                     }
@@ -942,7 +958,6 @@
                 doc.setFontSize(14);
                 doc.text("Resumo de Horas (Período Impresso)", 14, finalY);
                 
-                // Cálculo de horas ESPECÍFICO para o PDF, com base apenas nos dias impressos
                 const calculatePdfMonthlyHours = (docId) => {
                     let total = 0;
                     printedDates.forEach(date => {
@@ -957,7 +972,6 @@
                     return total;
                 };
 
-                // Monta os dados do resumo usando o cálculo exclusivo do PDF
                 const summaryData = doctors.value.map(d => {
                     const pdfMonthly = calculatePdfMonthlyHours(d.id);
                     const previous = previousMonthsTotals.value[d.id] || 0;
