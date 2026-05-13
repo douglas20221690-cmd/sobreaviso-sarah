@@ -499,11 +499,12 @@
                     auth.value = firebase.auth();
                     db.value = firebase.firestore();
                     
-                    auth.value.onAuthStateChanged((u) => {
+                    // MODIFICADO: Função assíncrona forçando a ordem correta
+                    auth.value.onAuthStateChanged(async (u) => {
                         user.value = u;
                         if (u && allowedEmails.includes(u.email)) {
-                            loadGlobalData();
-                            loadMonthData();
+                            await loadGlobalData(); // <- 1. OBRIGA a baixar a lista de médicos primeiro
+                            loadMonthData();        // <- 2. SÓ DEPOIS busca a agenda e faz as somas anuais
                         }
                     });
                 } catch (e) {
@@ -543,14 +544,14 @@
                     
                     if (!data.codes || data.codes.length === 0) {
                         codes.value = defaultCodes;
-                        saveGlobalData();
+                        await saveGlobalData();
                     } else {
                         codes.value = data.codes;
                     }
                 } else {
                     doctors.value = [{id: '1', name: 'Médico A'}, {id: '2', name: 'Médico B'}];
                     codes.value = defaultCodes;
-                    saveGlobalData();
+                    await saveGlobalData();
                 }
             };
 
@@ -786,12 +787,12 @@
                 return total;
             };
 
-            // MODIFICADO: Busca explícita mês a mês para forçar o carregamento mesmo no primeiro acesso
             const calculatePreviousMonthsTotals = async () => {
                 if (!db.value) return;
                 const [currY, currM] = currentMonthStr.value.split('-').map(Number);
                 
                 const totals = {};
+                // Como agora o loadGlobalData é aguardado antes, doctors.value sempre terá os dados aqui
                 doctors.value.forEach(d => totals[d.id] = 0);
 
                 // Se for janeiro, o histórico anual é sempre zero
@@ -802,7 +803,6 @@
                 
                 try {
                     // Loop forçado pegando mês 1, mês 2... até o mês anterior (currM - 1)
-                    // Isso ignora qualquer problema de cache do Firebase
                     for (let m = 1; m < currM; m++) {
                         const monthStr = `${currY}-${String(m).padStart(2, '0')}`;
                         const docSnap = await db.value.collection('schedules').doc(monthStr).get();
@@ -815,13 +815,16 @@
                             Object.values(monthSched).forEach(dayShifts => {
                                 dayShifts.forEach(shift => {
                                     const code = codes.value.find(c => c.code == shift.codeId);
-                                    if (code && totals[shift.doctorId] !== undefined) {
+                                    if (code) {
+                                        // Garante que o ID existe na contagem mesmo se o médico não estava na lista padrão
+                                        if (totals[shift.doctorId] === undefined) totals[shift.doctorId] = 0;
                                         totals[shift.doctorId] += Number(code.duration);
                                     }
                                 });
                             });
                             Object.keys(monthAdj).forEach(docId => {
-                                if (monthAdj[docId] && totals[docId] !== undefined) {
+                                if (monthAdj[docId]) {
+                                    if (totals[docId] === undefined) totals[docId] = 0;
                                     totals[docId] += 18; 
                                 }
                             });
@@ -848,8 +851,8 @@
             // --- EXPORTAÇÃO ---
 
             const exportToPDF = async () => {
-                // MODIFICADO: Captura o estado IMEDIATAMENTE ao clicar no botão. 
-                // Impede que dados sofram "defasagem" devido ao tempo da conexão com a internet.
+                // Captura o estado instantaneamente para garantir que as edições
+                // mais recentes estejam no PDF de imediato.
                 const reportSchedule = JSON.parse(JSON.stringify(schedule.value));
                 const reportHolidays = [...holidays.value];
                 
@@ -866,7 +869,6 @@
                 let nextMonthSchedule = {};
                 let nextMonthHolidays = [];
                 
-                // Agora o tempo que o Firebase leva para buscar o próximo mês NÃO AFETA os dias locais que já capturamos acima
                 try {
                     const docSnap = await db.value.collection('schedules').doc(nextMonthStr).get();
                     if (docSnap.exists) {
